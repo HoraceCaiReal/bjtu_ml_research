@@ -1,0 +1,35 @@
+# ---------- 深度学习框架（PyTorch CPU 版本） ----------
+torch==2.2.0+cpu
+torchvision==0.17.0+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# ---------- 传统机器学习 ----------
+scikit-learn==1.4.0          # 决策树、SVM、K-Means
+scikit-image==0.22.0         # 图像预处理（特征提取等）
+xgboost==2.0.3               # 可选：梯度提升树对比
+
+# ---------- 预训练模型库（可选扩展） ----------
+timm==0.9.12                 # PyTorch Image Models
+
+# ---------- 数据处理与可视化 ----------
+numpy==1.26.3
+pandas==2.1.4
+matplotlib==3.8.2            # 微软雅黑字体已通过 Docker / VSCode 配置
+seaborn==0.13.1
+plotly==5.18.0               # 交互式图表
+opencv-python==4.9.0.80      # 图像读取与基础处理
+Pillow==10.2.0               # PIL 图像处理
+
+# ---------- Jupyter 与交互式系统 ----------
+jupyterlab==4.0.11
+notebook==7.0.8              # 兼容传统 .ipynb 打开方式
+ipywidgets==8.1.1            # 综合展示系统 GUI 核心
+ipykernel==6.29.0            # VSCode 运行 Jupyter 所需
+tqdm==4.66.1                 # 进度条
+
+# ---------- 代码质量工具 ----------
+ruff==0.4.0                  # Python 代码格式化与检查（替代 Black）
+
+# ---------- 工具库 ----------
+PyYAML==6.0.1
+tensorboard==2.15.1          # 训练过程可视化（可选）

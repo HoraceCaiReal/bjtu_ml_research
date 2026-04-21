@@ -1,0 +1,19 @@
+[tool.ruff]
+# 与 Black 兼容的默认配置
+target-version = "py310"      # 针对 Python 3.10
+line-length = 88              # 默认行宽，与 Black 一致
+
+[tool.ruff.lint]
+# 基础规则集：E/W（PEP8）、F（Pyflakes）、I（isort 导入排序）
+select = ["E", "W", "F", "I"]
+# 忽略个别过于严格的规则
+ignore = ["E501"]             # 行过长由 formatter 处理，linter 不重复报错
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+# 使用单引号还是双引号：默认保留原样，如需强制双引号可取消注释
+# quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

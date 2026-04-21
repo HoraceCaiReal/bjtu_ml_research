@@ -1,0 +1,71 @@
+{
+    // ========== 编辑器基础体验（高兼容性） ==========
+    // 等宽字体 fallback：Consolas 是 Windows 自带，Courier New 是通用后备
+    "editor.fontFamily": "Consolas, 'Courier New', monospace",
+    "editor.fontSize": 14,
+    "editor.lineHeight": 1.5,
+    "editor.lineNumbers": "on",
+    "editor.smoothScrolling": true,
+    "editor.minimap.enabled": true,
+    "editor.minimap.scale": 1,
+    "editor.wordWrap": "off",
+
+    // 代码长度参考线：88 对应 Black 默认行长，120 是团队上限
+    "editor.rulers": [88, 120],
+
+    // 括号与缩进可视化
+    "editor.guides.bracketPairs": true,
+    "editor.bracketPairColorization.enabled": true,
+
+    // Tab / 空格统一，避免团队混用
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+
+    // 保存时自动清理格式
+    "editor.formatOnSave": true,
+    "editor.formatOnPaste": true,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "files.trimFinalNewlines": true,
+
+    // ========== 文件浏览体验 ==========
+    // 减少无意义确认弹窗
+    "explorer.confirmDragAndDrop": false,
+    "explorer.confirmDelete": false,
+    "explorer.confirmPasteNative": false,
+    // 文件树层级缩进更清晰
+    "workbench.tree.indent": 16,
+
+    // ========== Python / Jupyter 体验 ==========
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.autoImportCompletions": true,
+    "jupyter.askForKernelRestart": false,
+    "jupyter.interactiveWindow.creationMode": "perFile",
+    "notebook.lineNumbers": "on",
+    "notebook.output.textLineLimit": 50,
+    "notebook.formatOnSave.enabled": true,
+
+    // ========== 代码格式化（Ruff） ==========
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "charliermarsh.ruff"
+    },
+    "[jupyter]": {
+        "notebook.formatOnSave.enabled": true
+    },
+
+    // ========== Diff 对比体验 ==========
+    // 不要忽略行尾空格差异，避免引入无意义改动
+    "diffEditor.ignoreTrimWhitespace": false,
+    "diffEditor.renderSideBySide": true,
+
+    // ========== 文件排除（保持侧边栏清爽） ==========
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.ipynb_checkpoints": true,
+        "**/*.pyc": true,
+        "**/.pytest_cache": true,
+        "**/.mypy_cache": true
+    }
+}

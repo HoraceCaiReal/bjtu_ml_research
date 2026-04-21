@@ -1,0 +1,23 @@
+services:
+  ml-crack:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: bjtu_crack_detection
+    volumes:
+      # 代码目录挂载（双向同步）
+      - ..:/workspace
+      # 数据目录挂载（本地绝对路径，需修改为你电脑的实际路径）
+      # :ro 表示只读，保护数据
+      - C:/Work/bjtu_crack_data:/workspace/data:ro
+      # 如果有 Windows 字体文件，挂载微软雅黑
+      - C:/Windows/Fonts/msyh.ttc:/usr/share/fonts/truetype/microsoft-yahei.ttf:ro
+    ports:
+      - "8888:8888"  # Jupyter
+      - "6006:6006"  # TensorBoard（备用）
+    environment:
+      - PYTHONPATH=/workspace
+      - JUPYTER_ENABLE_LAB=yes
+    stdin_open: true
+    tty: true
+    command: jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
