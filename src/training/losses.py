@@ -4,7 +4,6 @@
 """
 
 import torch.nn as nn
-from sklearn import metrics as sk_metrics  # 如需自定义 sklearn 损失包装
 
 
 def get_cross_entropy_loss(**kwargs):

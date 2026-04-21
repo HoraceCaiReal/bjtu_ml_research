@@ -4,11 +4,9 @@
 说明：此模块供 notebooks 调用，避免在 notebook 中写过长数据处理代码
 """
 
-import os
-from pathlib import Path
-from typing import Tuple, List
+from typing import List, Tuple
 
-from src.config import POSITIVE_DIR, NEGATIVE_DIR, check_data_exists
+from src.config import NEGATIVE_DIR, POSITIVE_DIR, check_data_exists
 
 
 def load_image_paths() -> Tuple[List[str], List[int]]:

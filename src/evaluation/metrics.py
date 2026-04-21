@@ -4,12 +4,12 @@
 """
 
 from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    confusion_matrix,
-    classification_report,
+    accuracy_score,  # noqa: F401
+    classification_report,  # noqa: F401
+    confusion_matrix,  # noqa: F401
+    f1_score,  # noqa: F401
+    precision_score,  # noqa: F401
+    recall_score,  # noqa: F401
 )
 
 

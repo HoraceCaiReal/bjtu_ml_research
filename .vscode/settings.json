@@ -49,9 +49,14 @@
     "notebook.formatOnSave.enabled": true,
 
     // ========== 代码格式化（Ruff） ==========
+    // Ruff 同时替代 Black（格式化）+ Flake8（检查）+ isort（导入排序）
     "[python]": {
         "editor.formatOnSave": true,
-        "editor.defaultFormatter": "charliermarsh.ruff"
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll": "explicit"
+        }
     },
     "[jupyter]": {
         "notebook.formatOnSave.enabled": true

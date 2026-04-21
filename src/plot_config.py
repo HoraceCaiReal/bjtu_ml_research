@@ -17,10 +17,10 @@ def set_chinese_font():
     设置 matplotlib 中文字体为微软雅黑。
     若微软雅黑不可用，依次尝试 WenQuanYi Micro Hei、SimHei。
     """
-    plt.rcParams['font.sans-serif'] = [
-        'Microsoft YaHei',
-        'WenQuanYi Micro Hei',
-        'SimHei',
-        'DejaVu Sans'
+    plt.rcParams["font.sans-serif"] = [
+        "Microsoft YaHei",
+        "WenQuanYi Micro Hei",
+        "SimHei",
+        "DejaVu Sans",
     ]
-    plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示为方块的问题
+    plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示为方块的问题
