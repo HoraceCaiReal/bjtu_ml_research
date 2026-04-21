@@ -18,22 +18,21 @@ data/
     └── ...
 ```
 
-## 如何挂载到 Docker
+## 如何在代码中使用
 
-修改 `docker/docker-compose.yml` 中的数据路径映射：
+项目通过 `.env` 文件配置数据集路径。在 `bjtu_ml_research` 根目录创建 `.env` 文件：
 
-```yaml
-volumes:
-  - C:/你的实际路径:/workspace/data:ro
+```bash
+CRACK_DATA_ROOT=C:/你的实际路径
 ```
 
 例如，如果你的数据放在 `D:/课程资料/裂纹数据集`：
 
-```yaml
-  - D:/课程资料/裂纹数据集:/workspace/data:ro
+```bash
+CRACK_DATA_ROOT=D:/课程资料/裂纹数据集
 ```
 
-`:ro` 表示容器内只读，保护原始数据不被误修改。
+代码中通过 `src.config.DATA_ROOT` 自动读取该路径。
 
 ## 数据保密
 
