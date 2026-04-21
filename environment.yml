@@ -1,6 +1,5 @@
 name: bjtu_ml
 channels:
-  - pytorch
   - conda-forge
   - defaults
 dependencies:
@@ -14,6 +13,7 @@ dependencies:
   - scikit-image=0.22
   - matplotlib=3.8
   - seaborn=0.13
+  - scipy
 
   # 图像处理（opencv 通过 pip 安装，避免 conda/pip 冲突）
   - pillow=10.2
@@ -24,18 +24,16 @@ dependencies:
   - ipywidgets=8.1
   - ipykernel=6.29
 
-  # PyTorch 已移至 pip 段（CUDA 版本需要指定 --find-links）
-
   # 工具库
   - pyyaml=6.0
   - tqdm=4.66
   - plotly=5.18
 
   # pip 补充包（conda 中没有或版本不合适）
+  # 注意：PyTorch CUDA 版必须通过 pip + --extra-index-url 安装
   - pip
   - pip:
-    # PyTorch CUDA 11.8 版本（如需 CPU 版，见 README 说明）
-    - --find-links https://mirrors.aliyun.com/pytorch-wheels/cu118
+    - --extra-index-url https://mirrors.aliyun.com/pytorch-wheels/cu118
     - torch==2.1.1+cu118
     - torchvision==0.16.1+cu118
     # OpenCV（pip 版避免 conda DLL 冲突）

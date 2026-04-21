@@ -16,5 +16,5 @@ convention = "google"
 
 [tool.ruff.format]
 indent-style = "space"
-line-ending = "native"        # Windows 用 CRLF，跨平台兼容
+line-ending = "lf"            # 与 .gitattributes eol=lf 保持一致，避免 LF/CRLF 冲突
 skip-magic-trailing-comma = false

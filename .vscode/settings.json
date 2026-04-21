@@ -29,6 +29,9 @@
     "files.insertFinalNewline": true,
     "files.trimFinalNewlines": true,
 
+    // 行尾符统一为 LF（与 .gitattributes eol=lf 和 Ruff line-ending=lf 一致）
+    "files.eol": "\n",
+
     // ========== 文件浏览体验 ==========
     // 减少无意义确认弹窗
     "explorer.confirmDragAndDrop": false,

@@ -2,7 +2,6 @@
 Matplotlib 字体配置模块
 
 用法：在每个 Notebook 的最开头运行
-    import sys; sys.path.append('/workspace')
     from src.plot_config import set_chinese_font
     set_chinese_font()
 

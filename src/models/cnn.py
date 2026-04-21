@@ -3,25 +3,22 @@
 包含：卷积神经网络 (CNN)
 """
 
-import torch
 import torch.nn as nn
 
 from src.config import DEVICE
 
 
 class CrackCNN(nn.Module):
-    """
-    裂纹识别 CNN 基类
-    TODO: 根据任务需求设计网络结构
-    """
+    """裂纹识别 CNN 基类"""
+
     def __init__(self, num_classes=2):
-        super(CrackCNN, self).__init__()
+        super().__init__()
+        self.num_classes = num_classes
         # TODO: 定义网络层
-        pass
 
     def forward(self, x):
         # TODO: 定义前向传播
-        pass
+        raise NotImplementedError
 
 
 def get_cnn_model(**kwargs):

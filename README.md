@@ -266,7 +266,7 @@ nbstripout --install
 `environment.yml` 是 Anaconda 的原生环境定义文件，比 `requirements.txt` 更适合团队：
 
 - **明确指定 Python 版本**（3.10），避免双方 Python 版本不一致
-- **区分 conda 包和 pip 包**：NumPy、Pandas 等用 conda 安装更稳定；PyTorch CUDA 版本通过 pip + `--find-links` 安装，确保获取正确的 GPU 轮子
+- **区分 conda 包和 pip 包**：NumPy、Pandas 等用 conda 安装更稳定；PyTorch CUDA 版本通过 pip + `--extra-index-url` 安装，确保获取正确的 GPU 轮子
 - **PyTorch CUDA 版**：通过 pip 指定 `+cu118` 后缀和阿里云镜像，确保安装 CUDA 11.8 版本；代码中自动检测 GPU 可用性，无 GPU 时回退到 CPU
 - **跨平台一致**：conda 会自动处理 Windows 上的二进制依赖
 
@@ -276,10 +276,20 @@ nbstripout --install
 
 ```powershell
 conda activate bjtu_ml
+
+# conda 包：直接安装
 conda install 新包名
 
-# 然后导出更新后的环境文件，提交到 Git
-conda env export --no-builds > environment.yml
+# pip 包：pip install
+pip install 新包名
+```
+
+**然后手动编辑 `environment.yml`**，将新增包添加到对应的 conda 或 pip 段。
+
+> ⚠️ **不要使用 `conda env export > environment.yml`**！这会覆盖精心配置的文件，导致 PyTorch CUDA 的 `--extra-index-url` 和版本后缀 `+cu118` 丢失，协作者拉取后将无法正确安装 GPU 版本。
+
+```powershell
+# 编辑 environment.yml 后，提交到 Git
 git add environment.yml
 git commit -m "env: 添加 xxx 依赖"
 git push origin main

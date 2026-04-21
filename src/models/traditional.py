@@ -3,8 +3,8 @@
 包含：决策树 (Decision Tree)、支持向量机 (SVM)
 """
 
-from sklearn.tree import DecisionTreeClassifier
 from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 
 
 def get_decision_tree(**kwargs):
