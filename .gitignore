@@ -9,7 +9,8 @@ data/*
 *.tar.gz
 
 # 模型权重文件（通常较大，若需共享可用 Git LFS，但建议忽略）
-models/
+# 注意：仅忽略根目录的 models/ 权重文件夹，不忽略 src/models/ 源代码
+/models/
 *.pth
 *.h5
 *.pkl

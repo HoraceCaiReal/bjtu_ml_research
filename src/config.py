@@ -2,13 +2,15 @@
 项目全局配置
 
 用法：
-    from src.config import DATA_ROOT
+    from src.config import DATA_ROOT, DEVICE
     data_path = DATA_ROOT / "Positive"
+    tensor = tensor.to(DEVICE)
 """
 
 import os
 from pathlib import Path
 
+import torch
 from dotenv import load_dotenv
 
 # 加载 .env 文件（如果存在）
@@ -21,6 +23,9 @@ DATA_ROOT = Path(_DATA_ROOT).resolve()
 # 正/负样本目录
 POSITIVE_DIR = DATA_ROOT / "Positive"
 NEGATIVE_DIR = DATA_ROOT / "Negative"
+
+# 自动检测 GPU/CPU：有 CUDA 可用则使用 GPU，否则回退到 CPU
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def check_data_exists() -> bool:

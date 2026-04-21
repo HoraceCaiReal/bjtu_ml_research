@@ -14,6 +14,7 @@
 - [Anaconda](https://www.anaconda.com/download)（已安装）
 - [Git for Windows](https://git-scm.com/download/win)
 - [VSCode](https://code.visualstudio.com/) + 推荐插件：Python、Jupyter、Ruff、GitLens
+- **（推荐）NVIDIA GPU + 已安装 CUDA 驱动**：环境默认安装 PyTorch CUDA 11.8 版本，可自动加速训练；无 GPU 也能正常运行，PyTorch 会自动回退到 CPU
 
 ### 1.2 克隆仓库并创建环境
 
@@ -25,6 +26,10 @@ cd bjtu_ml_research
 # 2. 创建并激活 conda 环境（环境名：bjtu_ml，Python 3.10）
 conda env create -f environment.yml
 conda activate bjtu_ml
+
+# ★ 如果你的电脑没有 NVIDIA GPU，需要改用 CPU 版本 PyTorch：
+#   pip uninstall torch torchvision -y
+#   pip install torch==2.1.1+cpu torchvision==0.16.1+cpu -f https://mirrors.aliyun.com/pytorch-wheels/cpu
 
 # 3. 注册 Jupyter Kernel（让 VSCode/Jupyter Lab 能找到这个环境）
 python -m ipykernel install --user --name=bjtu_ml --display-name "Python (bjtu_ml)"
@@ -261,9 +266,9 @@ nbstripout --install
 `environment.yml` 是 Anaconda 的原生环境定义文件，比 `requirements.txt` 更适合团队：
 
 - **明确指定 Python 版本**（3.10），避免双方 Python 版本不一致
-- **区分 conda 包和 pip 包**：PyTorch、OpenCV 等用 conda 安装更稳定；Ruff 等用 pip 补充
-- **PyTorch CPU 版**：通过 `cpuonly` 包确保不会偷偷安装 GPU 版，节省空间和下载时间
-- **跨平台一致**：conda 会自动处理 Windows 上的二进制依赖（如 OpenCV 的 DLL）
+- **区分 conda 包和 pip 包**：NumPy、Pandas 等用 conda 安装更稳定；PyTorch CUDA 版本通过 pip + `--find-links` 安装，确保获取正确的 GPU 轮子
+- **PyTorch CUDA 版**：通过 pip 指定 `+cu118` 后缀和阿里云镜像，确保安装 CUDA 11.8 版本；代码中自动检测 GPU 可用性，无 GPU 时回退到 CPU
+- **跨平台一致**：conda 会自动处理 Windows 上的二进制依赖
 
 ### 4.2 环境更新
 
@@ -388,7 +393,9 @@ git push origin main
 - 可以用，但务必理解代码逻辑，在 conda 环境中验证通过后再提交。提交信息中注明 "部分代码由 AI 辅助生成"。
 
 **Q6：没有 GPU，CNN 训练会不会很慢？**
-- 本任务使用 CPU 版 PyTorch，但图像尺寸建议先缩小（如 128x128 或 64x64），数据量也可以先用子集（如 2000 张）快速验证代码正确性，最后再跑全量。
+- 本项目默认安装 PyTorch CUDA 11.8 版本。如果你有 NVIDIA GPU，训练会自动使用 GPU 加速；如果没有 GPU，PyTorch 会自动回退到 CPU 运行。
+- 无 GPU 时建议先缩小图像尺寸（如 128x128 或 64x64），数据量也可以先用子集（如 2000 张）快速验证代码正确性，最后再跑全量。
+- 也可以切换为 CPU 版 PyTorch（更轻量）：`pip install torch==2.1.1+cpu torchvision==0.16.1+cpu -f https://mirrors.aliyun.com/pytorch-wheels/cpu`
 
 **Q7：协作者的 conda 环境和我不一样怎么办？**
 - 如果 `environment.yml` 更新过，协作者运行 `conda env update -f environment.yml --prune` 即可同步。

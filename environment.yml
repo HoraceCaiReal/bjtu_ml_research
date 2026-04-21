@@ -15,8 +15,7 @@ dependencies:
   - matplotlib=3.8
   - seaborn=0.13
 
-  # 图像处理
-  - opencv=4.9
+  # 图像处理（opencv 通过 pip 安装，避免 conda/pip 冲突）
   - pillow=10.2
 
   # Jupyter 生态
@@ -25,10 +24,7 @@ dependencies:
   - ipywidgets=8.1
   - ipykernel=6.29
 
-  # PyTorch CPU 版本
-  - pytorch=2.2
-  - torchvision=0.17
-  - cpuonly
+  # PyTorch 已移至 pip 段（CUDA 版本需要指定 --find-links）
 
   # 工具库
   - pyyaml=6.0
@@ -38,6 +34,13 @@ dependencies:
   # pip 补充包（conda 中没有或版本不合适）
   - pip
   - pip:
+    # PyTorch CUDA 11.8 版本（如需 CPU 版，见 README 说明）
+    - --find-links https://mirrors.aliyun.com/pytorch-wheels/cu118
+    - torch==2.1.1+cu118
+    - torchvision==0.16.1+cu118
+    # OpenCV（pip 版避免 conda DLL 冲突）
+    - opencv-python==4.9.0.80
+    # 工具与格式化
     - ruff==0.7.4
     - python-dotenv==1.0.0
     - nbstripout==0.7.1
