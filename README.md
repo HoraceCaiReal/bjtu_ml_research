@@ -59,93 +59,89 @@ jupyter lab
 
 ---
 
-## 二、协作流程（Git 直接提交）
+## 二、协作流程（Git 分支 + 合并）
 
-本仓库采用**直接向主仓库提交**的方式协作。管理员和协作者都拥有写权限，双方直接 `git push` 到 `main` 分支。由于只有两人，关键是**提交前沟通好、避免同时改同一文件**。
+本仓库采用**功能分支开发、main 分支合并**的方式协作。双方各自从 `main` 创建分支开发，完成后合并回 `main`。
 
-### 2.1 管理员操作
+> 为什么用分支？
+> - `main` 始终保持可运行状态，不会有人正在改一半的代码
+> - 每个人的工作隔离在自己的分支，互不干扰
+> - 合并前可以 review 对方代码，避免低级错误进主分支
 
-#### 步骤 1：创建 GitHub 仓库并邀请协作者
-
-1. 在 GitHub 新建仓库 `bjtu_ml_research`，设为 **Public** 或 **Private**。
-2. `Settings -> Access -> Collaborators -> Add people`，邀请协作者的 GitHub 账号。
-3. 本地初始化并推送：
-
-```powershell
-git init
-git add .
-git commit -m "init: 工程骨架 + Anaconda环境"
-git branch -M main
-git remote add origin https://github.com/<你的用户名>/bjtu_ml_research.git
-git push -u origin main
-```
-
-#### 步骤 2：日常开发流程
+### 2.1 完整协作流程（双方通用）
 
 ```powershell
-# 1. 提交前先拉取最新代码（避免覆盖协作者的改动）
+# ========== 1. 开工前：同步 main ==========
+git checkout main
 git pull origin main
 
-# 2. 写代码，在本地 conda 环境里跑通
-# ...
+# ========== 2. 创建功能分支 ==========
+# 分支名规范：feature/功能描述 或 fix/bug描述
+git checkout -b feature/数据预处理
 
-# 3. 提交（提交信息写清楚）
+# ========== 3. 写代码、测试 ==========
+# ... 开发中 ...
+
+# ========== 4. 提交到本地 ==========
 git add .
-git commit -m "feat: 添加 SVM 基线实验"
+git commit -m "feat: 实现数据加载与归一化"
 
-# 4. 推送到 GitHub
-git push origin main
+# ========== 5. 推送分支到远程 ==========
+git push origin feature/数据预处理
+
+# ========== 6. 合并到 main（两种方式任选） ==========
+
+# 【方式A：本地合并（推荐，最快）】
+git checkout main
+git pull origin main              # 确保 main 是最新的
+git merge feature/数据预处理      # 合并分支
+# 如果有冲突，解决后 git add . && git commit -m "merge: 合并数据预处理"
+git push origin main              # 推送合并后的 main
+
+# 【方式B：GitHub 网页合并（想偷懒时用）】
+# 打开 https://github.com/lijiawei255/bjtu_ml_research
+# 点击上方 "branches" 或页面提示的 "Compare & pull request"
+# 点击 "Merge" 按钮合并，然后本地执行：
+# git checkout main && git pull origin main
+
+# ========== 7. 清理已合并的分支 ==========
+git branch -d feature/数据预处理       # 删除本地分支
+git push origin --delete feature/数据预处理  # 删除远程分支（可选）
 ```
 
-> **关键规则**：
-> - **每次 push 前先 `git pull`**，如果有冲突，先解决冲突再 push
-> - **不要上传数据文件或模型权重**（`.gitignore` 已帮你拦截）
-> - **Jupyter Notebook 建议清除输出后再提交**（减少仓库体积和冲突）
+### 2.2 关键规则
 
-### 2.2 协作者操作
-
-#### 步骤 1：直接克隆主仓库
-
-协作者**不需要 Fork**，直接克隆管理员的主仓库：
-
-```powershell
-git clone https://github.com/lijiawei255/bjtu_ml_research.git
-cd bjtu_ml_research
-```
-
-> 因为管理员已在 GitHub 上把你添加为 Collaborator，你有直接 push 权限。
-
-#### 步骤 2：创建相同的环境
-
-```powershell
-conda env create -f environment.yml
-conda activate bjtu_ml
-python -m ipykernel install --user --name=bjtu_ml --display-name "Python (bjtu_ml)"
-```
-
-#### 步骤 3：日常开发流程
-
-```powershell
-# 1. 每次开工前，先拉取最新代码
-git pull origin main
-
-# 2. 写代码，conda 环境里验证
-# ...
-
-# 3. 提交并推送
-git add .
-git commit -m "feat: 实现数据预处理模块"
-git push origin main
-```
-
-### 2.3 避免冲突的黄金法则
-
-| 场景 | 做法 |
+| 规则 | 说明 |
 |------|------|
-| 开工前 | `git pull origin main`，确保本地最新 |
-| 两人同时改同一个文件 | **避免**。微信先说一声"我在改 `data_utils.py`" |
-| push 失败提示有冲突 | 先 `git pull origin main` → 解决冲突 → 再 push |
-| 不小心覆盖了对方代码 | `git log` 查看历史，`git revert` 回退 |
+| **main 只合并不直接改** | 不要在 `main` 分支上直接写代码，永远从 `main` 切出新分支 |
+| **分支名见名知意** | `feature/数据增强`、`fix/路径错误`、`docs/更新报告` |
+| **合并前 pull main** | 合并前先 `git pull origin main`，避免覆盖他人已合并的代码 |
+| **小步快跑** | 一个功能一个分支，不要攒一个星期再合并，尽量 1-2 天合并一次 |
+| **合并完删分支** | 合并后删除功能分支，保持分支列表整洁 |
+
+### 2.3 冲突处理
+
+如果合并时提示冲突：
+
+```powershell
+git checkout main
+git pull origin main
+git merge feature/你的分支
+
+# Git 会提示冲突文件，例如：
+# CONFLICT (content): Merge conflict in src/data_utils.py
+
+# 打开冲突文件，搜索 "<<<<<<< HEAD"，手动保留正确版本，删除标记行
+# 解决后：
+git add .
+git commit -m "merge: 解决 data_utils.py 冲突"
+git push origin main
+```
+
+**减少冲突的技巧**：
+- 开工前 `git pull origin main` 同步最新代码
+- 不要同时修改同一个文件（微信说一声"我在改 xxx.py"）
+- 通用函数抽到 `src/` 独立 `.py` 中，减少 Notebook 直接冲突
 
 ### 2.4 提交信息规范（建议遵守）
 
@@ -361,16 +357,21 @@ jupyter nbconvert --to pdf notebooks/04_综合展示系统.ipynb
 
 **Q1：协作者如何同步管理员最新更新？**
 ```powershell
+git checkout main
 git pull origin main
 ```
 
-**Q2：两人同时 push 冲突了怎么办？**
+**Q2：合并分支时冲突了怎么办？**
 ```powershell
-# 1. 先拉取对方代码
+# 1. 确保你在 main 分支，且已拉取最新代码
+git checkout main
 git pull origin main
 
-# 2. Git 会提示冲突文件，打开文件手动保留正确版本
-# 3. 解决后提交
+# 2. 合并你的功能分支
+git merge feature/你的分支
+
+# 3. Git 会提示冲突文件，打开文件手动保留正确版本，删除 <<<<<<< 标记
+# 4. 解决后提交
 git add .
 git commit -m "merge: 解决冲突"
 git push origin main
@@ -407,8 +408,8 @@ git push origin main
 - [ ] VSCode 解释器已选择为 `bjtu_ml (conda)`
 - [ ] Jupyter Lab 能正常启动，`http://localhost:8888` 可访问
 - [ ] `from src.plot_config import set_chinese_font; set_chinese_font()` 后 matplotlib 中文正常
-- [ ] 管理员成功推送一次代码到 main
-- [ ] 协作者成功拉取并推送一次代码到 main
+- [ ] 管理员成功创建一个 feature 分支、开发、合并到 main
+- [ ] 协作者成功创建一个 feature 分支、开发、合并到 main
 - [ ] 双方各创建一个 GitHub Issue 测试讨论流程
 - [ ] 双方 VSCode 插件基本一致，AI 辅助编程已配置
 
