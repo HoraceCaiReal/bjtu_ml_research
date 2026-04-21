@@ -14,14 +14,20 @@
 ## 提交规范
 
 1. **清除输出**：非最终提交前，建议清除 Cell Output 后再提交到 Git（避免仓库膨胀）。
-2. **微软雅黑**：本仓库已统一配置字体，图表中的中文应正常显示。
+2. **微软雅黑**：在 Notebook 开头运行：
+   ```python
+   from src.plot_config import set_chinese_font
+   set_chinese_font()
+   ```
 3. **代码可读性**：关键代码块保留在 `src/` 的 `.py` 模块中，Notebook 中只做调用和展示。
 
 ## 如何启动
 
+确保已激活 conda 环境 `bjtu_ml`：
+
 ```bash
-cd docker
-docker compose up
+conda activate bjtu_ml
+jupyter lab
 ```
 
-然后在浏览器中打开 `http://localhost:8888`，在 `/workspace/notebooks/` 下编辑即可。
+然后在浏览器中打开 `http://localhost:8888`，在 `notebooks/` 下编辑即可。

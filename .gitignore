@@ -35,6 +35,20 @@ build/
 .vscode/launch.json
 .vscode/tasks.json
 
+# 虚拟环境 / Conda
+.env
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Conda 环境文件（个人本地配置不上传）
+# environment.yml 是团队共享的，不忽略
+# 但如果生成 environment.lock.yml 可以忽略
+*.lock.yml
+
 # 操作系统文件
 .DS_Store
 Thumbs.db

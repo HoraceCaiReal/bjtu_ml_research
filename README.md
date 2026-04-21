@@ -6,39 +6,42 @@
 
 ---
 
-## 一、快速开始（管理员首次搭建）
+## 一、快速开始（首次搭建环境）
 
 ### 1.1 前提条件
 
 - Windows 10/11
-- [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)（已安装并启动）
+- [Anaconda](https://www.anaconda.com/download)（已安装）
 - [Git for Windows](https://git-scm.com/download/win)
-- [VSCode](https://code.visualstudio.com/) + 推荐插件：Python、Jupyter、GitLens
+- [VSCode](https://code.visualstudio.com/) + 推荐插件：Python、Jupyter、Ruff、GitLens
 
-### 1.2 克隆与启动
+### 1.2 克隆仓库并创建环境
 
 ```powershell
-# 1. 克隆仓库（管理员直接克隆自己的仓库，协作者见第二节）
-git clone https://github.com/<你的用户名>/bjtu_ml_research.git
+# 1. 克隆仓库
+git clone https://github.com/lijiawei255/bjtu_ml_research.git
 cd bjtu_ml_research
 
-# 2. 准备数据（数据保密，不上传 Git）
-# 将老师提供的数据集放入本地目录，例如：
-# C:/Work/bjtu_crack_data/
-#   ├── Negative/
-#   └── Positive/
-# 然后修改 docker/docker-compose.yml 中的数据挂载路径为你自己的实际路径
+# 2. 创建并激活 conda 环境（环境名：bjtu_ml，Python 3.10）
+conda env create -f environment.yml
+conda activate bjtu_ml
 
-# 3. 启动 Docker 环境
-cd docker
-docker compose up --build
+# 3. 注册 Jupyter Kernel（让 VSCode/Jupyter Lab 能找到这个环境）
+python -m ipykernel install --user --name=bjtu_ml --display-name "Python (bjtu_ml)"
 
-# 4. 浏览器访问 Jupyter Lab
-# http://localhost:8888
-# 无需密码，直接进入
+# 4. 启动 Jupyter Lab
+jupyter lab
 ```
 
-> **字体说明**：本工程已统一配置为**微软雅黑**。Jupyter Lab 界面、Matplotlib 图表中文均正常显示。
+浏览器会自动打开，或者在地址栏输入 `http://localhost:8888`。
+
+> **字体说明**：VSCode 编辑器保持系统默认字体。Jupyter Notebook 中画图时，运行 `from src.plot_config import set_chinese_font; set_chinese_font()` 即可使用微软雅黑。
+
+### 1.3 VSCode 选择解释器
+
+打开 VSCode 后，按 `Ctrl+Shift+P` → 输入 `Python: Select Interpreter` → 选择 `bjtu_ml (conda)`。
+
+这样 VSCode 的代码补全、调试、Jupyter 内核都会使用统一的 conda 环境。
 
 ---
 
@@ -57,7 +60,7 @@ docker compose up --build
 ```powershell
 git init
 git add .
-git commit -m "init: 工程骨架 + Docker环境"
+git commit -m "init: 工程骨架 + Anaconda环境"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/bjtu_ml_research.git
 git push -u origin main
@@ -69,7 +72,7 @@ git push -u origin main
 # 1. 提交前先拉取最新代码（避免覆盖协作者的改动）
 git pull origin main
 
-# 2. 写代码，在 Docker 里跑通
+# 2. 写代码，在本地 conda 环境里跑通
 # ...
 
 # 3. 提交（提交信息写清楚）
@@ -92,19 +95,27 @@ git push origin main
 协作者**不需要 Fork**，直接克隆管理员的主仓库：
 
 ```powershell
-git clone https://github.com/<管理员用户名>/bjtu_ml_research.git
+git clone https://github.com/lijiawei255/bjtu_ml_research.git
 cd bjtu_ml_research
 ```
 
 > 因为管理员已在 GitHub 上把你添加为 Collaborator，你有直接 push 权限。
 
-#### 步骤 2：日常开发流程
+#### 步骤 2：创建相同的环境
+
+```powershell
+conda env create -f environment.yml
+conda activate bjtu_ml
+python -m ipykernel install --user --name=bjtu_ml --display-name "Python (bjtu_ml)"
+```
+
+#### 步骤 3：日常开发流程
 
 ```powershell
 # 1. 每次开工前，先拉取最新代码
 git pull origin main
 
-# 2. 写代码，Docker 中验证
+# 2. 写代码，conda 环境里验证
 # ...
 
 # 3. 提交并推送
@@ -117,9 +128,9 @@ git push origin main
 
 | 场景 | 做法 |
 |------|------|
-| 开工前 | `git pull origin main`，确保本地是最新的 |
-| 两人同时改同一个文件 | **避免**。开工前微信说一声"我在改 xxx.py" |
-| push 被拒（remote has changes）| 先 `git pull origin main`，解决冲突后再 push |
+| 开工前 | `git pull origin main`，确保本地最新 |
+| 两人同时改同一个文件 | **避免**。微信先说一声"我在改 `data_utils.py`" |
+| push 失败提示有冲突 | 先 `git pull origin main` → 解决冲突 → 再 push |
 | 不小心覆盖了对方代码 | `git log` 查看历史，`git revert` 回退 |
 
 ### 2.4 提交信息规范（建议遵守）
@@ -139,13 +150,10 @@ git push origin main
 ```
 bjtu_ml_research/
 ├── .vscode/
-│   └── settings.json               # 团队共享 VSCode 配置（字体、格式化等）
+│   └── settings.json               # 团队共享 VSCode 配置
 ├── data/                           # 数据集（被 .gitignore 忽略，不上传）
 │   ├── Negative/                   # 20000 张无裂纹图像（本地存放）
 │   └── Positive/                   # 20000 张有裂纹图像（本地存放）
-├── docker/
-│   ├── Dockerfile                  # 环境定义（PyTorch CPU + 所有依赖）
-│   └── docker-compose.yml          # 一键启动 Jupyter Lab
 ├── docs/                           # 文档、讨论记录、分工说明
 │   ├── 分工说明.md
 │   ├── 目录结构说明.md
@@ -161,6 +169,7 @@ bjtu_ml_research/
 │   │   ├── traditional.py          # 决策树、SVM
 │   │   ├── unsupervised.py         # K-Means
 │   │   └── cnn.py                  # 卷积神经网络
+│   ├── plot_config.py              # Matplotlib 中文字体配置
 │   ├── training/
 │   │   ├── losses.py               # 损失函数
 │   │   └── optimizers.py           # 参数搜索/调优
@@ -170,8 +179,9 @@ bjtu_ml_research/
 ├── videos/                         # 操作演示视频（保留目录，不上传大文件）
 ├── outputs/                        # 实验输出（图片、日志等）
 ├── .gitignore                      # 数据与临时文件排除规则
+├── environment.yml                 # Anaconda 环境定义（团队共享）
 ├── pyproject.toml                  # Ruff 格式化规则配置
-├── requirements.txt                # Python 依赖清单
+├── requirements.txt                # pip 依赖清单（备用）
 └── README.md                       # 本文件
 ```
 
@@ -179,39 +189,55 @@ bjtu_ml_research/
 
 ## 四、环境说明
 
-### 4.1 Docker 环境特点
+### 4.1 为什么用 `environment.yml`？
 
-- **基础镜像**：`python:3.10-slim`
-- **PyTorch**：CPU 版本（`torch==2.2.0+cpu`），无需 GPU
-- **中文字体**：已安装 `fonts-noto-cjk`、`fonts-wqy-microhei`，并挂载 Windows 微软雅黑字体
-- **Jupyter Lab**：端口 `8888`，无密码，开箱即用
-- **TensorBoard**：端口 `6006`（备用）
+`environment.yml` 是 Anaconda 的原生环境定义文件，比 `requirements.txt` 更适合团队：
 
-### 4.2 修改数据路径
+- **明确指定 Python 版本**（3.10），避免双方 Python 版本不一致
+- **区分 conda 包和 pip 包**：PyTorch、OpenCV 等用 conda 安装更稳定；Ruff 等用 pip 补充
+- **PyTorch CPU 版**：通过 `cpuonly` 包确保不会偷偷安装 GPU 版，节省空间和下载时间
+- **跨平台一致**：conda 会自动处理 Windows 上的二进制依赖（如 OpenCV 的 DLL）
 
-`docker/docker-compose.yml` 第 12 行：
+### 4.2 环境更新
 
-```yaml
-- C:/Work/bjtu_crack_data:/workspace/data:ro
-```
-
-请将 `C:/Work/bjtu_crack_data` 替换为你电脑上**实际的数据集存放路径**（包含 `Negative/` 和 `Positive/` 的目录）。修改后重启 Docker：
+如果后续需要新增依赖：
 
 ```powershell
-cd docker
-docker compose down
-docker compose up --build
+conda activate bjtu_ml
+conda install 新包名
+
+# 然后导出更新后的环境文件，提交到 Git
+conda env export --no-builds > environment.yml
+git add environment.yml
+git commit -m "env: 添加 xxx 依赖"
+git push origin main
 ```
 
-### 4.3 VSCode 配置与 AI 插件推荐
+协作者收到后执行：
+```powershell
+conda env update -f environment.yml --prune
+```
+
+### 4.3 如果 conda 安装太慢
+
+可以配置清华 Anaconda 镜像：
+
+```powershell
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free
+conda config --add channels https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/pytorch
+conda config --set show_channel_urls yes
+```
+
+然后重新 `conda env create -f environment.yml`。
+
+### 4.4 VSCode 配置与 AI 插件推荐
 
 本仓库已共享 `.vscode/settings.json`，包含：
 
 - 自动格式化（Ruff）
 - Jupyter 自动保存
-- 文件排除规则（`__pycache__`、`.ipynb_checkpoints` 等）
-
-**字体说明**：VSCode 编辑器字体保持系统默认，不做强制。只有在 Jupyter Notebook 中画图时，需要在 Notebook 开头调用 `from src.plot_config import set_chinese_font; set_chinese_font()` 即可让 matplotlib 使用微软雅黑。
+- 文件排除规则（`__pycache__`、`.ipynb_checkpoints`、`.venv` 等）
 
 **推荐安装的 VSCode 插件**（双方保持一致）：
 
@@ -241,7 +267,7 @@ docker compose up --build
 若老师要求 PDF：
 
 ```bash
-# 在 Docker Jupyter Lab 中，打开 Notebook
+# 在 Jupyter Lab 中，打开 Notebook
 # File -> Save and Export Notebook As -> PDF
 # 或
 jupyter nbconvert --to pdf notebooks/04_综合展示系统.ipynb
@@ -287,10 +313,14 @@ git push origin main
 - **不能**。`.gitignore` 已忽略 `*.pth`、`*.pkl` 等。如需临时共享，用微信/网盘；正式代码中提供训练脚本即可。
 
 **Q5：AI 插件生成的代码可以直接用吗？**
-- 可以用，但务必理解代码逻辑，在 Docker 中验证通过后再提交。提交信息中注明 "部分代码由 AI 辅助生成"。
+- 可以用，但务必理解代码逻辑，在 conda 环境中验证通过后再提交。提交信息中注明 "部分代码由 AI 辅助生成"。
 
 **Q6：没有 GPU，CNN 训练会不会很慢？**
 - 本任务使用 CPU 版 PyTorch，但图像尺寸建议先缩小（如 128x128 或 64x64），数据量也可以先用子集（如 2000 张）快速验证代码正确性，最后再跑全量。
+
+**Q7：协作者的 conda 环境和我不一样怎么办？**
+- 如果 `environment.yml` 更新过，协作者运行 `conda env update -f environment.yml --prune` 即可同步。
+- 如果还有差异，双方同时 `conda list` 对比，把差异包补充到 `environment.yml` 里统一提交。
 
 ---
 
@@ -298,10 +328,11 @@ git push origin main
 
 - [ ] GitHub 仓库已创建，协作者已添加为 Collaborator
 - [ ] 本地 `git clone` 成功，能正常拉取和推送
-- [ ] Docker Desktop 已启动，`docker compose up` 能打开 Jupyter Lab
-- [ ] `http://localhost:8888` 能访问
-- [ ] 在 Notebook 中运行 `import torch; print(torch.__version__)` 显示 CPU 版本
-- [ ] 能成功 `import sklearn`, `import cv2`, `import ipywidgets`
+- [ ] `conda env create -f environment.yml` 成功，无报错
+- [ ] `conda activate bjtu_ml` 后，能 `import torch, sklearn, cv2, ipywidgets`
+- [ ] VSCode 解释器已选择为 `bjtu_ml (conda)`
+- [ ] Jupyter Lab 能正常启动，`http://localhost:8888` 可访问
+- [ ] `from src.plot_config import set_chinese_font; set_chinese_font()` 后 matplotlib 中文正常
 - [ ] 管理员成功推送一次代码到 main
 - [ ] 协作者成功拉取并推送一次代码到 main
 - [ ] 双方 VSCode 插件基本一致，AI 辅助编程已配置

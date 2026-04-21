@@ -1,0 +1,44 @@
+name: bjtu_ml
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  # Python 版本（双方必须一致）
+  - python=3.10
+
+  # 核心科学计算（conda 安装更稳定）
+  - numpy=1.26
+  - pandas=2.1
+  - scikit-learn=1.4
+  - scikit-image=0.22
+  - matplotlib=3.8
+  - seaborn=0.13
+
+  # 图像处理
+  - opencv=4.9
+  - pillow=10.2
+
+  # Jupyter 生态
+  - jupyterlab=4.0
+  - notebook=7.0
+  - ipywidgets=8.1
+  - ipykernel=6.29
+
+  # PyTorch CPU 版本
+  - pytorch=2.2
+  - torchvision=0.17
+  - cpuonly
+
+  # 工具库
+  - pyyaml=6.0
+  - tqdm=4.66
+  - plotly=5.18
+
+  # pip 补充包（conda 中没有或版本不合适）
+  - pip
+  - pip:
+    - ruff==0.4.0
+    - timm==0.9.12
+    - xgboost==2.0.3
+    - tensorboard==2.15.1
