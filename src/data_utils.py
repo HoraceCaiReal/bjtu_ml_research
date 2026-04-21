@@ -5,29 +5,37 @@
 """
 
 import os
-import glob
+from pathlib import Path
 from typing import Tuple, List
 
+from src.config import POSITIVE_DIR, NEGATIVE_DIR, check_data_exists
 
-def load_image_paths(data_dir: str) -> Tuple[List[str], List[int]]:
+
+def load_image_paths() -> Tuple[List[str], List[int]]:
     """
     读取裂纹图像数据集路径
-    
-    Args:
-        data_dir: 数据根目录，包含 Negative/ 和 Positive/
-        
+
+    依赖 .env 文件中的 CRACK_DATA_ROOT 配置数据集根目录。
+
     Returns:
         image_paths: 图像文件路径列表
         labels: 对应标签列表（0=无裂纹, 1=有裂纹）
     """
-    # TODO: 实现数据读取逻辑
-    pass
+    check_data_exists()
+
+    neg_paths = [str(p) for p in NEGATIVE_DIR.glob("*.jpg")]
+    pos_paths = [str(p) for p in POSITIVE_DIR.glob("*.jpg")]
+
+    image_paths = neg_paths + pos_paths
+    labels = [0] * len(neg_paths) + [1] * len(pos_paths)
+
+    return image_paths, labels
 
 
 def split_dataset(image_paths, labels, test_size=0.2, val_size=0.1, random_state=42):
     """
     划分训练/验证/测试集
-    
+
     Returns:
         六元组: X_train, X_val, X_test, y_train, y_val, y_test
     """

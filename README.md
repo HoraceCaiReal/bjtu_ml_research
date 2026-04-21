@@ -29,13 +29,27 @@ conda activate bjtu_ml
 # 3. 注册 Jupyter Kernel（让 VSCode/Jupyter Lab 能找到这个环境）
 python -m ipykernel install --user --name=bjtu_ml --display-name "Python (bjtu_ml)"
 
-# 4. 启动 Jupyter Lab
+# 4. 配置 nbstripout（自动清除 Notebook 输出，避免提交大文件）
+nbstripout --install
+
+# 5. 配置数据集路径
+# 复制模板文件，然后修改为你电脑上的实际路径
+copy .env.example .env
+# 用 VSCode 打开 .env，把 CRACK_DATA_ROOT 改成你的数据集根目录
+
+# 6. 启动 Jupyter Lab
 jupyter lab
 ```
 
 浏览器会自动打开，或者在地址栏输入 `http://localhost:8888`。
 
-> **字体说明**：VSCode 编辑器保持系统默认字体。Jupyter Notebook 中画图时，运行 `from src.plot_config import set_chinese_font; set_chinese_font()` 即可使用微软雅黑。
+> **字体说明**：VSCode 编辑器保持系统默认字体。Jupyter Notebook 中画图时，运行：
+> ```python
+> from src.plot_config import set_chinese_font
+> set_chinese_font()
+> ```
+>
+> **数据集路径**：代码通过 `.env` 文件读取 `CRACK_DATA_ROOT`，不上传 Git。双方各自配置自己的路径。
 
 ### 1.3 VSCode 选择解释器
 
@@ -189,7 +203,64 @@ bjtu_ml_research/
 
 ## 四、环境说明
 
-### 4.1 为什么用 `environment.yml`？
+### 4.1 数据集路径配置（.env）
+
+项目使用 `.env` 文件管理数据集路径，**不上传 Git**（已加入 `.gitignore`）。
+
+```powershell
+# 1. 复制模板
+copy .env.example .env
+
+# 2. 编辑 .env，填入你的实际路径
+# CRACK_DATA_ROOT=D:/课程数据/裂纹图像
+```
+
+代码中通过 `src.config.DATA_ROOT` 读取：
+
+```python
+from src.config import DATA_ROOT, POSITIVE_DIR, NEGATIVE_DIR
+print(DATA_ROOT)  # 显示你配置的路径
+```
+
+**为什么这样做？**
+- 双方电脑路径不同，不能写死在代码里
+- `.env` 不上传 Git，各自独立配置
+- 协作者拿到代码后只需要改一行 `.env` 就能跑
+
+### 4.2 Jupyter Notebook 输出自动清理（nbstripout）
+
+Notebook 的 Cell 输出（图片、打印日志）提交到 Git 会导致：
+- 仓库体积暴涨
+- `git diff` 无法阅读
+- 两人同时改一个 notebook 时极易冲突
+
+**解决方案**：`nbstripout` 会在每次提交时自动清除所有 Notebook 的输出。
+
+```powershell
+# 初始化时运行一次（已包含在 environment.yml 中）
+nbstripout --install
+```
+
+此后你正常 `git add *.ipynb` → `git commit` → `git push`，nbstripout 会在后台自动清理输出。
+
+> 最终提交报告前，如果需要保留输出展示给老师，可以临时禁用：
+> ```powershell
+> git add --no-verify notebooks/04_综合展示系统.ipynb
+> ```
+
+### 4.3 讨论记录（GitHub Issues）
+
+团队讨论统一使用 **GitHub Issues**，不再用本地 markdown 文件记录。
+
+**地址**：[https://github.com/lijiawei255/bjtu_ml_research/issues](https://github.com/lijiawei255/bjtu_ml_research/issues)
+
+**使用规范**：
+- 创建 Issue 时选择对应标签：`讨论`、`数据`、`模型`、`环境`、`报告`
+- 标题格式：`[标签] 简短描述`，如 `[模型] CNN 输入尺寸选 128 还是 256`
+- 讨论结论明确后关闭 Issue
+- 重要的代码修改直接 push，提交信息中引用 Issue 编号，如 `fix #3`
+
+### 4.4 为什么用 `environment.yml`？
 
 `environment.yml` 是 Anaconda 的原生环境定义文件，比 `requirements.txt` 更适合团队：
 
@@ -218,7 +289,7 @@ git push origin main
 conda env update -f environment.yml --prune
 ```
 
-### 4.3 如果 conda 安装太慢
+### 4.5 如果 conda 安装太慢
 
 可以配置清华 Anaconda 镜像：
 
@@ -231,7 +302,7 @@ conda config --set show_channel_urls yes
 
 然后重新 `conda env create -f environment.yml`。
 
-### 4.4 VSCode 配置与 AI 插件推荐
+### 4.6 VSCode 配置与 AI 插件推荐
 
 本仓库已共享 `.vscode/settings.json`，包含：
 
@@ -330,11 +401,15 @@ git push origin main
 - [ ] 本地 `git clone` 成功，能正常拉取和推送
 - [ ] `conda env create -f environment.yml` 成功，无报错
 - [ ] `conda activate bjtu_ml` 后，能 `import torch, sklearn, cv2, ipywidgets`
+- [ ] 已复制 `.env.example` 为 `.env` 并配置好数据集路径
+- [ ] 运行 `src/config.py` 或 `src/data_utils.py` 能正确找到数据集
+- [ ] `nbstripout --install` 已执行
 - [ ] VSCode 解释器已选择为 `bjtu_ml (conda)`
 - [ ] Jupyter Lab 能正常启动，`http://localhost:8888` 可访问
 - [ ] `from src.plot_config import set_chinese_font; set_chinese_font()` 后 matplotlib 中文正常
 - [ ] 管理员成功推送一次代码到 main
 - [ ] 协作者成功拉取并推送一次代码到 main
+- [ ] 双方各创建一个 GitHub Issue 测试讨论流程
 - [ ] 双方 VSCode 插件基本一致，AI 辅助编程已配置
 
 ---

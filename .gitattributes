@@ -1,0 +1,9 @@
+# 自动清除 Jupyter Notebook 的输出（由 nbstripout 管理）
+*.ipynb filter=nbstripout
+
+# 确保文本文件使用 LF 换行符（跨平台一致性）
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
