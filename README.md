@@ -1,7 +1,7 @@
 # 裂纹图像识别系统 — 研究性专题
 
-> 《机器学习与Python编程》课程研究性专题（测控系）  
-> 组员：XXX（仓库管理员）、XXX（协作者）  
+> 《机器学习与Python编程》课程研究性专题（测控系）
+> 组员：李嘉维（仓库管理员）、蔡昊伭（协作者）
 > 日期：2026年4月
 
 ---
@@ -31,7 +31,7 @@ conda activate bjtu_ml
 #   pip uninstall torch torchvision -y
 #   pip install torch==2.1.1+cpu torchvision==0.16.1+cpu -f https://mirrors.aliyun.com/pytorch-wheels/cpu
 
-# 3. 注册 Jupyter Kernel（让 VSCode/Jupyter Lab 能找到这个环境）
+# 3. 注册 Jupyter Kernel（让 VSCode 能直接运行 Notebook）
 python -m ipykernel install --user --name=bjtu_ml --display-name "Python (bjtu_ml)"
 
 # 4. 配置 nbstripout（自动清除 Notebook 输出，避免提交大文件）
@@ -42,13 +42,11 @@ nbstripout --install
 copy .env.example .env
 # 用 VSCode 打开 .env，把 CRACK_DATA_ROOT 改成你的数据集根目录
 
-# 6. 启动 Jupyter Lab
-jupyter lab
+# 6. 开始在 VSCode 中编辑 Notebook
+# 直接用 VSCode 打开 .ipynb 文件即可，VSCode 内置了 Jupyter 支持，无需额外启动
 ```
 
-浏览器会自动打开，或者在地址栏输入 `http://localhost:8888`。
-
-> **字体说明**：VSCode 编辑器保持系统默认字体。Jupyter Notebook 中画图时，运行：
+> **字体说明**：VSCode 编辑器保持系统默认字体。在 VSCode 中运行 Notebook 画图时，运行：
 > ```python
 > from src.plot_config import set_chinese_font
 > set_chinese_font()
@@ -251,7 +249,7 @@ nbstripout --install
 
 ### 4.3 讨论记录（GitHub Issues）
 
-团队讨论统一使用 **GitHub Issues**，不再用本地 markdown 文件记录。
+团队讨论统一使用 **GitHub Issues**，不用本地 markdown 文件记录。
 
 **地址**：[https://github.com/lijiawei255/bjtu_ml_research/issues](https://github.com/lijiawei255/bjtu_ml_research/issues)
 
@@ -270,7 +268,7 @@ nbstripout --install
 - **PyTorch CUDA 版**：通过 pip 指定 `+cu118` 后缀和阿里云镜像，确保安装 CUDA 11.8 版本；代码中自动检测 GPU 可用性，无 GPU 时回退到 CPU
 - **跨平台一致**：conda 会自动处理 Windows 上的二进制依赖
 
-### 4.2 环境更新
+### 4.4 环境更新
 
 如果后续需要新增依赖：
 
@@ -329,7 +327,7 @@ conda config --set show_channel_urls yes
 | Jupyter (Microsoft) | Notebook 编辑与运行 |
 | Ruff (Astral Software) | 代码自动格式化 + Linter |
 | GitLens | Git 历史查看 |
-| GitHub Copilot / 通义灵码 / CodeGeeX | AI 辅助编程（自选其一） |
+| claude code / cline | AI 辅助编程（自选其一） |
 
 ---
 
@@ -349,7 +347,7 @@ conda config --set show_channel_urls yes
 若老师要求 PDF：
 
 ```bash
-# 在 Jupyter Lab 中，打开 Notebook
+# 在 VSCode 中，打开 Notebook
 # File -> Save and Export Notebook As -> PDF
 # 或
 jupyter nbconvert --to pdf notebooks/04_综合展示系统.ipynb
@@ -359,7 +357,7 @@ jupyter nbconvert --to pdf notebooks/04_综合展示系统.ipynb
 
 - 工具：Windows 自带 `Xbox Game Bar`（Win+G）或 `OBS Studio`
 - 内容：
-  1. 打开 Jupyter Lab，启动 `04_综合展示系统.ipynb`
+  1. 在 VSCode 中打开 `04_综合展示系统.ipynb`，运行 Notebook
   2. 演示数据处理方式的选择与切换
   3. 演示模型选择（决策树 / SVM / CNN）
   4. 演示超参数调整与实时结果查看
@@ -423,7 +421,7 @@ git push origin main
 - [ ] 运行 `src/config.py` 或 `src/data_utils.py` 能正确找到数据集
 - [ ] `nbstripout --install` 已执行
 - [ ] VSCode 解释器已选择为 `bjtu_ml (conda)`
-- [ ] Jupyter Lab 能正常启动，`http://localhost:8888` 可访问
+- [ ] VSCode 能正常打开并运行 .ipynb 文件（已安装 Jupyter 插件）
 - [ ] `from src.plot_config import set_chinese_font; set_chinese_font()` 后 matplotlib 中文正常
 - [ ] 管理员成功创建一个 feature 分支、开发、合并到 main
 - [ ] 协作者成功创建一个 feature 分支、开发、合并到 main

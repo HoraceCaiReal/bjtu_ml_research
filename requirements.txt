@@ -28,8 +28,10 @@ ipykernel==6.29.5            # VSCode 运行 Jupyter 所需
 tqdm==4.66.6                 # 进度条
 
 # ---------- 代码质量工具 ----------
-ruff==0.7.4                  # Python 代码格式化与检查（替代 Black）
+ruff==0.15.11                # Python 代码格式化与检查（替代 Black）
 
 # ---------- 工具库 ----------
 PyYAML==6.0.3
+scipy==1.11.4                # 科学计算（优化、统计等）
+python-dotenv==1.0.0         # 读取 .env 环境变量
 tensorboard==2.15.1          # 训练过程可视化（可选）

@@ -21,13 +21,8 @@
    ```
 3. **代码可读性**：关键代码块保留在 `src/` 的 `.py` 模块中，Notebook 中只做调用和展示。
 
-## 如何启动
+## 如何编辑
 
-确保已激活 conda 环境 `bjtu_ml`：
+**主要方式：用 VSCode 直接打开 .ipynb 文件**
 
-```bash
-conda activate bjtu_ml
-jupyter lab
-```
-
-然后在浏览器中打开 `http://localhost:8888`，在 `notebooks/` 下编辑即可。
+确保已激活 conda 环境 `bjtu_ml`，然后用 VSCode 直接打开 `notebooks/` 下的 `.ipynb` 文件即可。VSCode 内置 Jupyter 支持，无需启动额外服务。

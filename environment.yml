@@ -6,28 +6,28 @@ dependencies:
   # Python 版本（双方必须一致）
   - python=3.10
 
-  # 核心科学计算（conda 安装更稳定）
-  - numpy=1.26
-  - pandas=2.1
-  - scikit-learn=1.4
-  - scikit-image=0.22
-  - matplotlib=3.8
-  - seaborn=0.13
-  - scipy
+  # 核心科学计算（conda 安装更稳定，锁定精确版本确保双方一致）
+  - numpy=1.26.4
+  - pandas=2.1.4
+  - scikit-learn=1.4.2
+  - scikit-image=0.22.0
+  - matplotlib=3.8.4
+  - seaborn=0.13.2
+  - scipy=1.11.4
 
   # 图像处理（opencv 通过 pip 安装，避免 conda/pip 冲突）
-  - pillow=10.2
+  - pillow=10.2.0
 
-  # Jupyter 生态
-  - jupyterlab=4.0
-  - notebook=7.0
-  - ipywidgets=8.1
-  - ipykernel=6.29
+  # Jupyter 生态（锁定精确版本）
+  - jupyterlab=4.0.13
+  - notebook=7.0.8
+  - ipywidgets=8.1.1
+  - ipykernel=6.29.5
 
-  # 工具库
-  - pyyaml=6.0
-  - tqdm=4.66
-  - plotly=5.18
+  # 工具库（锁定精确版本）
+  - pyyaml=6.0.3
+  - tqdm=4.66.6
+  - plotly=5.18.0
 
   # pip 补充包（conda 中没有或版本不合适）
   # 注意：PyTorch CUDA 版必须通过 pip + --extra-index-url 安装
@@ -39,7 +39,7 @@ dependencies:
     # OpenCV（pip 版避免 conda DLL 冲突）
     - opencv-python==4.9.0.80
     # 工具与格式化
-    - ruff==0.7.4
+    - ruff==0.15.11
     - python-dotenv==1.0.0
     - nbstripout==0.7.1
     - timm==0.9.12
