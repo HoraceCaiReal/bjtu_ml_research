@@ -259,15 +259,6 @@ nbstripout --install
 - 讨论结论明确后关闭 Issue
 - 重要的代码修改直接 push，提交信息中引用 Issue 编号，如 `fix #3`
 
-### 4.4 为什么用 `environment.yml`？
-
-`environment.yml` 是 Anaconda 的原生环境定义文件，比 `requirements.txt` 更适合团队：
-
-- **明确指定 Python 版本**（3.10），避免双方 Python 版本不一致
-- **区分 conda 包和 pip 包**：NumPy、Pandas 等用 conda 安装更稳定；PyTorch CUDA 版本通过 pip + `--extra-index-url` 安装，确保获取正确的 GPU 轮子
-- **PyTorch CUDA 版**：通过 pip 指定 `+cu118` 后缀和阿里云镜像，确保安装 CUDA 11.8 版本；代码中自动检测 GPU 可用性，无 GPU 时回退到 CPU
-- **跨平台一致**：conda 会自动处理 Windows 上的二进制依赖
-
 ### 4.4 环境更新
 
 如果后续需要新增依赖：
@@ -298,7 +289,16 @@ git push origin main
 conda env update -f environment.yml --prune
 ```
 
-### 4.5 如果 conda 安装太慢
+### 4.5 为什么用 `environment.yml`？
+
+`environment.yml` 是 Anaconda 的原生环境定义文件，比 `requirements.txt` 更适合团队：
+
+- **明确指定 Python 版本**（3.10），避免双方 Python 版本不一致
+- **区分 conda 包和 pip 包**：NumPy、Pandas 等用 conda 安装更稳定；PyTorch CUDA 版本通过 pip + `--extra-index-url` 安装，确保获取正确的 GPU 轮子
+- **PyTorch CUDA 版**：通过 pip 指定 `+cu118` 后缀和阿里云镜像，确保安装 CUDA 11.8 版本；代码中自动检测 GPU 可用性，无 GPU 时回退到 CPU
+- **跨平台一致**：conda 会自动处理 Windows 上的二进制依赖
+
+### 4.6 如果 conda 安装太慢
 
 可以配置清华 Anaconda 镜像：
 
@@ -311,7 +311,7 @@ conda config --set show_channel_urls yes
 
 然后重新 `conda env create -f environment.yml`。
 
-### 4.6 VSCode 配置与 AI 插件推荐
+### 4.7 VSCode 配置与 AI 插件推荐
 
 本仓库已共享 `.vscode/settings.json`，包含：
 
