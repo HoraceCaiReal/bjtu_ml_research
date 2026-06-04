@@ -11,3 +11,4 @@
 *.txt text eol=lf
 *.cfg text eol=lf
 *.ini text eol=lf
+*.python-version text eol=lf

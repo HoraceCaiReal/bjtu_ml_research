@@ -1,7 +1,7 @@
 # 裂纹图像识别系统 — 研究性专题
 
 > 《机器学习与Python编程》课程研究性专题（测控系）
-> 组员：李嘉维（旧仓库管理员+协作者）、蔡昊伭（新仓库管理员）、梁静瑶（协作者）、blue eternal（协作者）
+> 组员：李嘉维（旧仓库管理员+协作者）、蔡昊伭（新仓库管理员）、梁静瑶（协作者）、王梓铭（协作者）
 > 日期：2026年5月19日
 
 ---
@@ -52,7 +52,7 @@ copy .env.example .env
 > set_chinese_font()
 > ```
 >
-> **数据集路径**：代码通过 `.env` 文件读取 `CRACK_DATA_ROOT`，不上传 Git。双方各自配置自己的路径。
+> **数据集路径**：代码通过 `.env` 文件读取 `CRACK_DATA_ROOT`，不上传 Git。各成员各自配置自己的路径。
 
 ### 1.3 VSCode 选择解释器
 
@@ -64,14 +64,14 @@ copy .env.example .env
 
 ## 二、协作流程（Git 分支 + 合并）
 
-本仓库采用**功能分支开发、main 分支合并**的方式协作。双方各自从 `main` 创建分支开发，完成后合并回 `main`。
+本仓库采用**功能分支开发、main 分支合并**的方式协作。各成员各自从 `main` 创建分支开发，完成后合并回 `main`。
 
 > 为什么用分支？
 > - `main` 始终保持可运行状态，不会有人正在改一半的代码
 > - 每个人的工作隔离在自己的分支，互不干扰
 > - 合并前可以 review 对方代码，避免低级错误进主分支
 
-### 2.1 完整协作流程（双方通用）
+### 2.1 完整协作流程（各成员通用）
 
 ```powershell
 # ========== 1. 开工前：同步 main ==========
@@ -172,26 +172,30 @@ bjtu_ml_research/
 │   ├── 目录结构说明.md
 │   └── 讨论记录/                   # 每次讨论新建一个 md 文件
 ├── notebooks/                      # Jupyter Notebook（研究报告主体）
-│   ├── 01_数据探索与预处理.ipynb
-│   ├── 02_传统机器学习.ipynb
-│   ├── 03_深度学习.ipynb
-│   └── 04_综合展示系统.ipynb       # 最终演示 + 报告整合
+│   ├── 01_data_exploration.ipynb       # 数据探索与预处理：CLAHE、高斯滤波、中值滤波
+│   ├── 02_traditional_ml.ipynb         # 传统机器学习：HOG+LBP+GLCM+边缘密度 → 决策树/SVM/KNN
+│   ├── 03_unsupervised.ipynb           # 无监督聚类：K-Means/GMM/DBSCAN + Agglomerative/谱聚类
+│   ├── 04_deep_learning.ipynb          # 深度学习：自建小型 CNN 训练与调参
+│   └── 05_comparison.ipynb             # 综合对比分析与结论
 ├── src/                            # 纯 Python 模块（供 notebooks 调用）
-│   ├── data_utils.py               # 数据读取、划分、预处理
+│   ├── data_utils.py               # 数据预处理：CLAHE、高斯滤波、中值滤波；特征提取：HOG、LBP、GLCM、边缘密度
 │   ├── models/
-│   │   ├── traditional.py          # 决策树、SVM
-│   │   ├── unsupervised.py         # K-Means
-│   │   └── cnn.py                  # 卷积神经网络
+│   │   ├── traditional.py          # 决策树、SVM、KNN（特征：HOG + LBP + GLCM + 边缘密度）
+│   │   ├── unsupervised.py         # K-Means、GMM、DBSCAN（核心）；Agglomerative、谱聚类（补充）
+│   │   └── cnn.py                  # 自建小型 CNN（CrackCNN）
 │   ├── plot_config.py              # Matplotlib 中文字体配置
 │   ├── training/
 │   │   ├── losses.py               # 损失函数
 │   │   └── optimizers.py           # 参数搜索/调优
 │   └── evaluation/
 │       └── metrics.py              # 评价指标
+├── tests/                          # 冒烟测试与单元测试
+│   └── test_smoke.py               # 基础导入与实例化测试
 ├── reports/                        # 导出的 PDF/HTML 报告（保留目录，不上传大文件）
 ├── videos/                         # 操作演示视频（保留目录，不上传大文件）
 ├── outputs/                        # 实验输出（图片、日志等）
 ├── .gitignore                      # 数据与临时文件排除规则
+├── .python-version                 # Python 版本锁定（3.10）
 ├── environment.yml                 # Anaconda 环境定义（团队共享）
 ├── pyproject.toml                  # Ruff 格式化规则配置
 ├── requirements.txt                # pip 依赖清单（备用）
@@ -222,7 +226,7 @@ print(DATA_ROOT)  # 显示你配置的路径
 ```
 
 **为什么这样做？**
-- 双方电脑路径不同，不能写死在代码里
+- 各成员电脑路径不同，不能写死在代码里
 - `.env` 不上传 Git，各自独立配置
 - 协作者拿到代码后只需要改一行 `.env` 就能跑
 
@@ -231,7 +235,7 @@ print(DATA_ROOT)  # 显示你配置的路径
 Notebook 的 Cell 输出（图片、打印日志）提交到 Git 会导致：
 - 仓库体积暴涨
 - `git diff` 无法阅读
-- 两人同时改一个 notebook 时极易冲突
+- 多人同时改一个 notebook 时极易冲突
 
 **解决方案**：`nbstripout` 会在每次提交时自动清除所有 Notebook 的输出。
 
@@ -242,10 +246,12 @@ nbstripout --install
 
 此后你正常 `git add *.ipynb` → `git commit` → `git push`，nbstripout 会在后台自动清理输出。
 
-> 最终提交报告前，如果需要保留输出展示给老师，可以临时禁用：
+> **最终提交报告前，如果确实需要保留输出展示给老师**，可以临时绕过 nbstripout 的 clean filter：
 > ```powershell
-> git add --no-verify notebooks/04_综合展示系统.ipynb
+> git -c filter.nbstripout.clean=false add notebooks/05_comparison.ipynb
 > ```
+>
+> 注意：这会提交带输出的 Notebook，可能增大仓库体积；日常开发仍建议保持输出清理。
 
 ### 4.3 讨论记录（GitHub Issues）
 
@@ -293,7 +299,7 @@ conda env update -f environment.yml --prune
 
 `environment.yml` 是 Anaconda 的原生环境定义文件，比 `requirements.txt` 更适合团队：
 
-- **明确指定 Python 版本**（3.10），避免双方 Python 版本不一致
+- **明确指定 Python 版本**（3.10），避免各成员 Python 版本不一致
 - **区分 conda 包和 pip 包**：NumPy、Pandas 等用 conda 安装更稳定；PyTorch CUDA 版本通过 pip + `--extra-index-url` 安装，确保获取正确的 GPU 轮子
 - **PyTorch CUDA 版**：通过 pip 指定 `+cu118` 后缀和阿里云镜像，确保安装 CUDA 11.8 版本；代码中自动检测 GPU 可用性，无 GPU 时回退到 CPU
 - **跨平台一致**：conda 会自动处理 Windows 上的二进制依赖
@@ -319,7 +325,7 @@ conda config --set show_channel_urls yes
 - Jupyter 自动保存
 - 文件排除规则（`__pycache__`、`.ipynb_checkpoints`、`.venv` 等）
 
-**推荐安装的 VSCode 插件**（双方保持一致）：
+**推荐安装的 VSCode 插件**（各成员保持一致）：
 
 | 插件名 | 用途 |
 |--------|------|
@@ -337,8 +343,8 @@ conda config --set show_channel_urls yes
 
 | 提交物 | 存放位置 | 说明 |
 |--------|----------|------|
-| 研究报告 | `notebooks/04_综合展示系统.ipynb` | Jupyter Notebook 格式，含背景、分工、讨论记录、代码、实验结果 |
-| 操作视频 | `videos/` | 录制综合展示系统的操作过程（不上传 Git，单独提交） |
+| 研究报告 | `notebooks/05_comparison.ipynb` | Jupyter Notebook 格式，含背景、分工、讨论记录、代码、实验结果 |
+| 操作视频 | `videos/` | 录制各 notebook 的操作过程（不上传 Git，单独提交） |
 | 源代码 | `src/` + `notebooks/` | 已通过 GitHub 仓库提交，老师可查看完整历史 |
 | 数据集 | 不提交 | 数据保密，仅本地存放 |
 
@@ -350,16 +356,16 @@ conda config --set show_channel_urls yes
 # 在 VSCode 中，打开 Notebook
 # File -> Save and Export Notebook As -> PDF
 # 或
-jupyter nbconvert --to pdf notebooks/04_综合展示系统.ipynb
+jupyter nbconvert --to pdf notebooks/05_comparison.ipynb
 ```
 
 ### 5.3 视频录制建议
 
 - 工具：Windows 自带 `Xbox Game Bar`（Win+G）或 `OBS Studio`
 - 内容：
-  1. 在 VSCode 中打开 `04_综合展示系统.ipynb`，运行 Notebook
+  1. 在 VSCode 中分别运行 notebooks/ 下的 5 个 notebook
   2. 演示数据处理方式的选择与切换
-  3. 演示模型选择（决策树 / SVM / CNN）
+  3. 演示不同模型对比（决策树 / SVM / KNN / GMM / DBSCAN / CNN）
   4. 演示超参数调整与实时结果查看
   5. 演示测试集验证与指标输出
 - 时长：5-10 分钟
@@ -407,7 +413,7 @@ git push origin main
 
 **Q7：协作者的 conda 环境和我不一样怎么办？**
 - 如果 `environment.yml` 更新过，协作者运行 `conda env update -f environment.yml --prune` 即可同步。
-- 如果还有差异，双方同时 `conda list` 对比，把差异包补充到 `environment.yml` 里统一提交。
+- 如果还有差异，各成员同时 `conda list` 对比，把差异包补充到 `environment.yml` 里统一提交。
 
 ---
 
@@ -418,16 +424,16 @@ git push origin main
 - [ ] `conda env create -f environment.yml` 成功，无报错
 - [ ] `conda activate bjtu_ml` 后，能 `import torch, sklearn, cv2, ipywidgets`
 - [ ] 已复制 `.env.example` 为 `.env` 并配置好数据集路径
-- [ ] 运行 `src/config.py` 或 `src/data_utils.py` 能正确找到数据集
+- [ ] 运行 `python -c "from src.config import DATA_ROOT, check_data_exists; print(DATA_ROOT); check_data_exists()"` 能正确检查数据集路径
 - [ ] `nbstripout --install` 已执行
 - [ ] VSCode 解释器已选择为 `bjtu_ml (conda)`
 - [ ] VSCode 能正常打开并运行 .ipynb 文件（已安装 Jupyter 插件）
 - [ ] `from src.plot_config import set_chinese_font; set_chinese_font()` 后 matplotlib 中文正常
 - [ ] 管理员成功创建一个 feature 分支、开发、合并到 main
 - [ ] 协作者成功创建一个 feature 分支、开发、合并到 main
-- [ ] 双方各创建一个 GitHub Issue 测试讨论流程
-- [ ] 双方 VSCode 插件基本一致，AI 辅助编程已配置
+- [ ] 各成员各创建一个 GitHub Issue 测试讨论流程
+- [ ] 各成员 VSCode 插件基本一致，AI 辅助编程已配置
 
 ---
 
-> 祝合作顺利！有问题在 `docs/讨论记录/` 中记录，或通过微信/QQ 及时沟通。
+> 祝合作顺利！技术问题优先在 **GitHub Issues** 中记录，或通过微信/QQ 及时沟通。
