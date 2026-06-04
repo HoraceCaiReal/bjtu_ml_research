@@ -31,8 +31,8 @@ build/
 
 # VS Code 个人设置（保留共享设置）
 # .vscode/settings.json 是团队共享配置（字体、格式化等），故意保留
+# .vscode/extensions.json 是团队共享推荐插件，故意保留
 # 仅忽略个人本地历史/调试配置
-.vscode/extensions.json
 .vscode/launch.json
 .vscode/tasks.json
 
@@ -55,9 +55,11 @@ venv.bak/
 Thumbs.db
 
 # 实验输出（由代码生成，不纳入版本控制）
-outputs/
-results/
-logs/
+# 使用 xxx/* 而非 xxx/ 以确保 .gitkeep 能被 Git 追踪
+outputs/*
+!outputs/.gitkeep
+results/*
+logs/*
 
 # 提交物目录：保留目录结构，但忽略生成的大文件
 # 报告由 notebooks 导出，视频单独提交
@@ -67,5 +69,4 @@ videos/*.mov
 # 但保留目录说明
 !videos/.gitkeep
 !reports/.gitkeep
-!outputs/.gitkeep
 !data/.gitkeep

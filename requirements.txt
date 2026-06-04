@@ -14,7 +14,7 @@ timm==0.9.12                 # PyTorch Image Models
 # ---------- 数据处理与可视化 ----------
 numpy==1.26.4
 pandas==2.1.4
-matplotlib==3.8.4            # 微软雅黑字体已通过 Docker / VSCode 配置
+matplotlib==3.8.4            # 微软雅黑字体已通过 src/plot_config.py 配置
 seaborn==0.13.2
 plotly==5.18.0               # 交互式图表
 opencv-python==4.9.0.80      # 图像读取与基础处理
@@ -34,4 +34,5 @@ ruff==0.15.11                # Python 代码格式化与检查（替代 Black）
 PyYAML==6.0.3
 scipy==1.11.4                # 科学计算（优化、统计等）
 python-dotenv==1.0.0         # 读取 .env 环境变量
+nbstripout==0.7.1            # 自动清除 Notebook 输出（协作必备）
 tensorboard==2.15.1          # 训练过程可视化（可选）
