@@ -7,9 +7,9 @@
     tensor = tensor.to(DEVICE)
 """
 
+import os
 from pathlib import Path
 
-import os
 import torch
 from dotenv import load_dotenv
 
@@ -22,7 +22,9 @@ load_dotenv(PROJECT_ROOT / ".env")
 _DATA_ROOT = os.getenv("CRACK_DATA_ROOT")
 if _DATA_ROOT:
     _data_root = Path(_DATA_ROOT).expanduser()
-    DATA_ROOT = (_data_root if _data_root.is_absolute() else PROJECT_ROOT / _data_root).resolve()
+    DATA_ROOT = (
+        _data_root if _data_root.is_absolute() else PROJECT_ROOT / _data_root
+    ).resolve()
 else:
     DATA_ROOT = PROJECT_ROOT / "data"
 

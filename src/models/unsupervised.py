@@ -66,9 +66,7 @@ class DBSCANClusterer:
     基于密度的聚类方法，可发现任意形状簇，自动识别噪声点。
     """
 
-    def __init__(
-        self, eps: float = 0.5, min_samples: int = 5, **kwargs: Any
-    ) -> None:
+    def __init__(self, eps: float = 0.5, min_samples: int = 5, **kwargs: Any) -> None:
         self.eps = eps
         self.min_samples = min_samples
         self.model = None
@@ -91,7 +89,9 @@ class AgglomerativeClusterer:
     自底向上的凝聚层次聚类，适合探索数据的层次结构。
     """
 
-    def __init__(self, n_clusters: int = 2, linkage: str = "ward", **kwargs: Any) -> None:
+    def __init__(
+        self, n_clusters: int = 2, linkage: str = "ward", **kwargs: Any
+    ) -> None:
         self.n_clusters = n_clusters
         self.linkage = linkage
         self.model = None

@@ -7,10 +7,23 @@
 from pathlib import Path
 from typing import Tuple
 
+import cv2
 import numpy as np
+from skimage.feature import graycomatrix, graycoprops, hog, local_binary_pattern
+from sklearn.model_selection import train_test_split
+
+
+def _imread_gray(path: Path) -> "np.ndarray | None":
+    """以灰度模式读取图像，兼容 Windows 中文路径。"""
+    buf = np.fromfile(str(path), dtype=np.uint8)
+    if buf is None or buf.size == 0:
+        return None
+    img = cv2.imdecode(buf, cv2.IMREAD_GRAYSCALE)
+    return img
 
 
 # ========== 图像预处理方法 ==========
+
 
 def apply_clahe(
     image: np.ndarray,
@@ -34,7 +47,8 @@ def apply_clahe(
     np.ndarray
         CLAHE 增强后的图像。
     """
-    raise NotImplementedError("TODO: 实现 CLAHE 对比度增强")
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+    return clahe.apply(image)
 
 
 def apply_gaussian_filter(
@@ -59,7 +73,7 @@ def apply_gaussian_filter(
     np.ndarray
         滤波后的图像。
     """
-    raise NotImplementedError("TODO: 实现高斯滤波")
+    return cv2.GaussianBlur(image, kernel_size, sigma)
 
 
 def apply_median_filter(
@@ -81,10 +95,11 @@ def apply_median_filter(
     np.ndarray
         滤波后的图像。
     """
-    raise NotImplementedError("TODO: 实现中值滤波")
+    return cv2.medianBlur(image, kernel_size)
 
 
 # ========== 特征提取方法 ==========
+
 
 def extract_hog_features(
     image: np.ndarray,
@@ -113,7 +128,14 @@ def extract_hog_features(
     np.ndarray
         HOG 特征向量。
     """
-    raise NotImplementedError("TODO: 实现 HOG 特征提取")
+    features = hog(
+        image,
+        orientations=orientations,
+        pixels_per_cell=pixels_per_cell,
+        cells_per_block=cells_per_block,
+        feature_vector=True,
+    )
+    return features
 
 
 def extract_lbp_features(
@@ -140,7 +162,10 @@ def extract_lbp_features(
     np.ndarray
         LBP 特征向量（直方图）。
     """
-    raise NotImplementedError("TODO: 实现 LBP 特征提取")
+    n_bins = n_points * (n_points - 1) + 3  # uniform LBP 直方图分箱数
+    lbp_image = local_binary_pattern(image, n_points, radius, method="uniform")
+    hist, _ = np.histogram(lbp_image, bins=n_bins, range=(0, n_bins), density=True)
+    return hist
 
 
 def extract_glcm_features(
@@ -168,7 +193,27 @@ def extract_glcm_features(
     np.ndarray
         GLCM 特征向量（包含 contrast, correlation, energy, homogeneity）。
     """
-    raise NotImplementedError("TODO: 实现 GLCM 特征提取")
+    # 将图像量化到 0-255 的 uint8 范围
+    img_uint8 = image.astype(np.uint8) if image.dtype != np.uint8 else image
+
+    props = []
+    for distance in distances:
+        for angle in angles:
+            glcm = graycomatrix(
+                img_uint8,
+                distances=[distance],
+                angles=[angle],
+                levels=256,
+                symmetric=True,
+                normed=True,
+            )
+            contrast = graycoprops(glcm, "contrast")[0, 0]
+            correlation = graycoprops(glcm, "correlation")[0, 0]
+            energy = graycoprops(glcm, "energy")[0, 0]
+            homogeneity = graycoprops(glcm, "homogeneity")[0, 0]
+            props.extend([contrast, correlation, energy, homogeneity])
+
+    return np.array(props, dtype=np.float64)
 
 
 def extract_edge_density(
@@ -196,26 +241,59 @@ def extract_edge_density(
     float
         边缘密度（边缘像素数 / 总像素数）。
     """
-    raise NotImplementedError("TODO: 实现边缘密度特征提取")
+    edges = cv2.Canny(image, low_threshold, high_threshold)
+    return float(np.count_nonzero(edges)) / edges.size
 
 
 # ========== 数据集工具函数 ==========
 
-def load_dataset(data_root: Path) -> Tuple[np.ndarray, np.ndarray]:
+
+def load_dataset(
+    data_root: Path,
+    max_samples: int | None = None,
+) -> Tuple[np.ndarray, np.ndarray]:
     """
-    加载全部数据集，返回图像数组和标签数组。
+    加载数据集，返回图像数组和标签数组。
 
     Parameters
     ----------
     data_root : Path
         数据集根目录（包含 Positive/ 和 Negative/ 子目录）。
+    max_samples : int or None
+        每类最多加载的图像数量。None 表示加载全部。
+        用于可视化/调试时快速加载少量样本。
 
     Returns
     -------
     Tuple[np.ndarray, np.ndarray]
         (images, labels)，标签 1 表示有裂纹，0 表示无裂纹。
     """
-    raise NotImplementedError("TODO: 实现数据集加载")
+    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
+
+    def _load_dir(directory: Path, label: int):
+        imgs, lbls = [], []
+        paths = sorted(directory.iterdir())
+        for path in paths[:max_samples]:
+            if path.suffix.lower() in IMAGE_EXTS:
+                img = _imread_gray(path)
+                if img is not None:
+                    imgs.append(img)
+                    lbls.append(label)
+        return imgs, lbls
+
+    pos_imgs, pos_lbls = _load_dir(data_root / "Positive", label=1)
+    neg_imgs, neg_lbls = _load_dir(data_root / "Negative", label=0)
+
+    all_imgs = pos_imgs + neg_imgs
+    labels = np.array(pos_lbls + neg_lbls, dtype=np.int64)
+
+    # 图像尺寸相同时堆叠为标准数组 (N, H, W)，否则回退 object 数组
+    shapes = {img.shape for img in all_imgs}
+    if len(shapes) == 1:
+        images = np.stack(all_imgs)
+    else:
+        images = np.array(all_imgs, dtype=object)
+    return images, labels
 
 
 def split_dataset(
@@ -245,4 +323,34 @@ def split_dataset(
     -------
     Tuple 包含 (X_train, X_val, X_test, y_train, y_val, y_test)。
     """
-    raise NotImplementedError("TODO: 实现数据集划分")
+    # 第一次划分：分离训练集和（验证集 + 测试集）
+    val_test_ratio = 1.0 - train_ratio
+    X_train, X_val_test, y_train, y_val_test = train_test_split(
+        images,
+        labels,
+        test_size=val_test_ratio,
+        random_state=random_seed,
+        stratify=labels,
+    )
+
+    # 第二次划分：从剩余部分分离验证集和测试集
+    test_ratio_in_remainder = val_ratio / (val_ratio + (1.0 - train_ratio - val_ratio))
+
+    # 小数据集时 stratify 可能导致某类样本不足，回退到不分层划分
+    try:
+        X_val, X_test, y_val, y_test = train_test_split(
+            X_val_test,
+            y_val_test,
+            test_size=test_ratio_in_remainder,
+            random_state=random_seed,
+            stratify=y_val_test,
+        )
+    except ValueError:
+        X_val, X_test, y_val, y_test = train_test_split(
+            X_val_test,
+            y_val_test,
+            test_size=test_ratio_in_remainder,
+            random_state=random_seed,
+        )
+
+    return X_train, X_val, X_test, y_train, y_val, y_test

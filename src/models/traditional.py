@@ -4,7 +4,7 @@
 特征提取：HOG + LBP + GLCM + 边缘密度
 """
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 import numpy as np
 
@@ -29,9 +29,7 @@ def extract_features(image: np.ndarray) -> np.ndarray:
     np.ndarray
         拼接后的特征向量。
     """
-    raise NotImplementedError(
-        "TODO: 整合 HOG + LBP + GLCM + 边缘密度 四特征"
-    )
+    raise NotImplementedError("TODO: 整合 HOG + LBP + GLCM + 边缘密度 四特征")
 
 
 class TraditionalClassifier:
