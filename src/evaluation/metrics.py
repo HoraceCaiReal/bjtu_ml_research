@@ -5,11 +5,16 @@
 
 from sklearn.metrics import (
     accuracy_score,  # noqa: F401
+    adjusted_rand_score,  # noqa: F401
+    calinski_harabasz_score,  # noqa: F401
     classification_report,  # noqa: F401
     confusion_matrix,  # noqa: F401
+    davies_bouldin_score,  # noqa: F401
     f1_score,  # noqa: F401
+    normalized_mutual_info_score,  # noqa: F401
     precision_score,  # noqa: F401
     recall_score,  # noqa: F401
+    silhouette_score,  # noqa: F401
 )
 
 
