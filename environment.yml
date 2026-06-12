@@ -49,3 +49,5 @@ dependencies:
       - xgboost==2.0.3
       - lightgbm==4.3.0
       - tensorboard==2.15.1
+      # Gradio 可视化系统
+      - gradio>=4.36.0

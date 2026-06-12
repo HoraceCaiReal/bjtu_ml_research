@@ -52,7 +52,7 @@ DATA_DEFAULTS = dict(
     random_seed=42,
     split_method="holdout",
     split_ratio=0.7,
-    preprocessing=["clahe", "median"],
+    preprocessing="clahe+median",
     features=["lbp", "glcm", "edge_density"],  # 精简特征集（108维），加速 A-E 组测试
 )
 
@@ -231,61 +231,61 @@ TEST_CASES = [
     {
         "id": "F1_rf_none",
         "model_name": "random_forest",
-        "preprocessing": ["none"],
+        "preprocessing": "none",
         "features": FULL_FEATURES,
     },
     {
         "id": "F2_rf_clahe",
         "model_name": "random_forest",
-        "preprocessing": ["clahe"],
+        "preprocessing": "clahe",
         "features": FULL_FEATURES,
     },
     {
         "id": "F3_rf_gaussian",
         "model_name": "random_forest",
-        "preprocessing": ["gaussian"],
+        "preprocessing": "gaussian",
         "features": FULL_FEATURES,
     },
     {
         "id": "F4_rf_clahe_gaussian",
         "model_name": "random_forest",
-        "preprocessing": ["clahe+gaussian"],
+        "preprocessing": "clahe+gaussian",
         "features": FULL_FEATURES,
     },
     {
         "id": "F5_rf_clahe_median",
         "model_name": "random_forest",
-        "preprocessing": ["clahe+median"],
+        "preprocessing": "clahe+median",
         "features": FULL_FEATURES,
     },
     {
-        "id": "F6_rf_all",
+        "id": "F6_rf_median",
         "model_name": "random_forest",
-        "preprocessing": ["clahe", "gaussian", "median"],
+        "preprocessing": "median",
         "features": FULL_FEATURES,
     },
     {
         "id": "F7_cnn_none",
         "model_name": "cnn",
         "cnn_loss_fn": "cross_entropy",
-        "preprocessing": ["none"],
+        "preprocessing": "none",
     },
     {
         "id": "F8_cnn_clahe_gaussian",
         "model_name": "cnn",
         "cnn_loss_fn": "cross_entropy",
-        "preprocessing": ["clahe+gaussian"],
+        "preprocessing": "clahe+gaussian",
     },
     {
         "id": "F9_km_none",
         "model_name": "kmeans",
-        "preprocessing": ["none"],
+        "preprocessing": "none",
         "features": FULL_FEATURES,
     },
     {
         "id": "F10_km_clahe_gaussian",
         "model_name": "kmeans",
-        "preprocessing": ["clahe+gaussian"],
+        "preprocessing": "clahe+gaussian",
         "features": FULL_FEATURES,
     },
 ]
@@ -358,6 +358,8 @@ def build_params(overrides: dict):
         "batch_size": int(cfg["cnn_batch_size"]),
         "epochs": int(cfg["cnn_epochs"]),
         "early_stopping_patience": int(cfg["cnn_early_stopping"]),
+        "input_size": int(cfg.get("cnn_input_size", 128)),
+        "weight_decay": float(cfg.get("cnn_weight_decay", 1e-4)),
     }
 
     unsup_params = {
@@ -375,7 +377,11 @@ def build_params(overrides: dict):
 
 def get_data_cache_key(overrides: dict) -> tuple:
     """生成数据缓存键（基于影响数据的参数）。"""
-    preproc = tuple(sorted(overrides.get("preprocessing", DATA_DEFAULTS["preprocessing"])))
+    preproc = overrides.get("preprocessing", DATA_DEFAULTS["preprocessing"])
+    if isinstance(preproc, str):
+        preproc = (preproc,)
+    else:
+        preproc = tuple(sorted(preproc))
     feats = tuple(sorted(overrides.get("features", DATA_DEFAULTS["features"])))
     return (
         overrides.get("max_samples", DATA_DEFAULTS["max_samples"]),
@@ -393,6 +399,9 @@ def get_cached_data(overrides: dict, cache: dict) -> dict:
     if key not in cache:
         preproc = overrides.get("preprocessing", DATA_DEFAULTS["preprocessing"])
         feats = overrides.get("features", DATA_DEFAULTS["features"])
+        # preprocessing 兼容 str 和 list 格式
+        if isinstance(preproc, str):
+            preproc = [preproc]
         cache[key] = prepare_data(
             max_samples=overrides.get("max_samples", DATA_DEFAULTS["max_samples"]),
             random_seed=overrides.get("random_seed", DATA_DEFAULTS["random_seed"]),

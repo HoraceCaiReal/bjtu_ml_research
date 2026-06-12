@@ -196,8 +196,10 @@ def _subsample_balanced(images, labels, max_samples, random_seed):
 
 
 # ============================================================
-# 4. 数据管线 prepare_data
+# 4. 数据管线 prepare_data（带缓存）
 # ============================================================
+
+_DATA_CACHE = {}  # key: (max_samples, tuple(preprocessing), tuple(features), seed)
 
 def prepare_data(
     max_samples: int = 1000,
@@ -208,11 +210,18 @@ def prepare_data(
     features: list = None,
     **kwargs,
 ) -> dict:
-    """统一数据管线：加载→预处理→提特征→划分。"""
+    """统一数据管线：加载→预处理→提特征→划分。支持内存缓存。"""
     if preprocessing is None:
         preprocessing = ["clahe", "median"]
     if features is None:
         features = ["hog", "lbp", "glcm", "edge_density"]
+
+    # 缓存检查
+    _cache_key = (max_samples, tuple(preprocessing), tuple(features), random_seed,
+                  split_method, split_ratio)
+    if _cache_key in _DATA_CACHE:
+        print(f"prepare_data: 命中缓存 ({_DATA_CACHE[_cache_key]['config']['n_samples']} 样本)")
+        return _DATA_CACHE[_cache_key]
 
     n_per_class = max_samples // 2
     images, labels = load_dataset(DATA_ROOT, max_samples=n_per_class)
@@ -243,6 +252,21 @@ def prepare_data(
         parts = [feat_map[f](img) for f in features if f in feat_map]
         return np.concatenate(parts)
 
+    # 构建特征名列表（用于特征重要性图）
+    _sample_img = compose_preprocess(images[0])
+    feature_names = []
+    _offset = 0
+    for f in features:
+        if f not in feat_map:
+            continue
+        _fv = feat_map[f](_sample_img)
+        _dim = len(_fv) if hasattr(_fv, '__len__') else 1
+        if _dim <= 4:
+            feature_names.extend([f"{f}"] * _dim)
+        else:
+            feature_names.extend([f"{f}[{i}]" for i in range(_dim)])
+        _offset += _dim
+
     processed = np.array([compose_preprocess(img) for img in images])
     X_all = np.stack([extract_selected(img) for img in processed])
     y_all = labels
@@ -253,19 +277,23 @@ def prepare_data(
         random_state=random_seed, stratify=y_all,
     )
 
-    print(f"prepare_data: {len(y_train)} train / {len(y_test)} test, "
-          f"dim={X_train.shape[1]}, preproc={preprocessing}, feats={features}")
-
-    return {
+    result = {
         "X_train": X_train, "X_test": X_test,
         "y_train": y_train, "y_test": y_test,
         "raw_images": images, "raw_labels": labels,
+        "feature_names": feature_names,
         "config": {
             "preprocessing": preprocessing, "features": features,
             "split_method": split_method, "split_ratio": split_ratio,
             "n_samples": len(labels), "feature_dim": X_train.shape[1],
         },
     }
+
+    _DATA_CACHE[_cache_key] = result
+    print(f"prepare_data: {len(y_train)} train / {len(y_test)} test, "
+          f"dim={X_train.shape[1]}, preproc={preprocessing}, feats={features}")
+
+    return result
 
 
 # ============================================================
@@ -540,13 +568,17 @@ def _build_traditional_model(model_name, params):
             n_jobs=-1,
         )
     elif model_name == "logistic_regression":
-        return LogisticRegression(
-            C=params.get("C", 1.0),
-            penalty=params.get("penalty", "l2"),
-            solver=params.get("solver", "lbfgs"),
-            max_iter=2000,
-            random_state=params.get("random_state", 42),
-        )
+        lr_kwargs = {
+            "C": params.get("C", 1.0),
+            "penalty": params.get("penalty", "l2"),
+            "solver": params.get("solver", "lbfgs"),
+            "max_iter": 2000,
+            "random_state": params.get("random_state", 42),
+        }
+        # elasticnet 正则化需要 l1_ratio 参数
+        if lr_kwargs["penalty"] == "elasticnet":
+            lr_kwargs["l1_ratio"] = params.get("l1_ratio", 0.5)
+        return LogisticRegression(**lr_kwargs)
     elif model_name == "xgboost":
         from xgboost import XGBClassifier
         return XGBClassifier(
@@ -594,11 +626,20 @@ def _get_param_grid(model_name):
             "max_depth": [5, 10, 20, None],
             "min_samples_split": [2, 5, 10],
         },
-        "logistic_regression": {
-            "C": [0.01, 0.1, 1, 10, 100],
-            "penalty": ["l1", "l2"],
-            "solver": ["liblinear", "lbfgs"],
-        },
+        # 逻辑回归需按 solver/penalty 兼容性分组（list-of-dicts 格式）
+        # lbfgs: 仅 l2; liblinear: l1+l2; saga: l1+l2+elasticnet
+        "logistic_regression": [
+            {"C": [0.01, 0.1, 1, 10, 100],
+             "penalty": ["l2"],
+             "solver": ["lbfgs", "liblinear", "saga"]},
+            {"C": [0.01, 0.1, 1, 10, 100],
+             "penalty": ["l1"],
+             "solver": ["liblinear", "saga"]},
+            {"C": [0.01, 0.1, 1, 10, 100],
+             "penalty": ["elasticnet"],
+             "solver": ["saga"],
+             "l1_ratio": [0.25, 0.5, 0.75]},
+        ],
         "xgboost": {
             "n_estimators": [50, 100, 200],
             "max_depth": [3, 6, 9],
@@ -669,7 +710,11 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
                     ("scaler", StandardScaler()),
                     ("clf", _build_traditional_model(model_name, params)),
                 ])
-                pg = {f"clf__{k}": v for k, v in param_grid.items()}
+                # 兼容 list-of-dicts 格式（如逻辑回归按 solver/penalty 分组）
+                if isinstance(param_grid, list):
+                    pg = [{f"clf__{k}": v for k, v in d.items()} for d in param_grid]
+                else:
+                    pg = {f"clf__{k}": v for k, v in param_grid.items()}
             else:
                 base_model = _build_traditional_model(model_name, params)
                 pg = param_grid
@@ -695,14 +740,42 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
     except Exception:
         y_prob = np.zeros_like(y_pred, dtype=float)
 
+    # binary:hinge 不输出概率，ROC-AUC/PR 曲线不可用，给出用户提示
+    if (model_name == "xgboost"
+            and params.get("objective") == "binary:hinge"
+            and y_prob.max() == 0):
+        status_msgs.append(
+            "⚠️ binary:hinge 仅输出硬标签，无法产生概率估计，"
+            "ROC-AUC 和 PR 曲线不可用。如需概率输出请改用 binary:logistic。"
+        )
+
+    cv_text = ""
     if validation_method == "kfold":
-        from sklearn.model_selection import cross_val_score
-        cv_scores = cross_val_score(model, np.vstack([X_tr, X_te]),
-                                    np.concatenate([y_tr, y_te]),
-                                    cv=cv_folds, scoring=scoring)
-        cv_text = f" | {cv_folds}折CV {scoring}: {cv_scores.mean():.4f}±{cv_scores.std():.4f}"
-    else:
-        cv_text = ""
+        from sklearn.model_selection import cross_validate as _cv
+        X_all_cv = np.vstack([X_tr, X_te])
+        y_all_cv = np.concatenate([y_tr, y_te])
+        scoring_list = ["accuracy", "f1", "precision", "recall", "roc_auc"]
+        cv_res = _cv(model, X_all_cv, y_all_cv, cv=cv_folds,
+                     scoring=scoring_list, n_jobs=-1)
+        # 构建每折指标表格
+        cv_rows = []
+        for fold_i in range(cv_folds):
+            row = [f"Fold {fold_i+1}"]
+            for sc in scoring_list:
+                key = f"test_{sc}"
+                row.append(f"{cv_res[key][fold_i]:.4f}")
+            cv_rows.append("| " + " | ".join(row) + " |")
+        # 均值±标准差
+        mean_row = ["**均值±std**"]
+        for sc in scoring_list:
+            key = f"test_{sc}"
+            m, s = cv_res[key].mean(), cv_res[key].std()
+            mean_row.append(f"**{m:.4f}±{s:.4f}**")
+        cv_rows.append("| " + " | ".join(mean_row) + " |")
+        header = "| Fold | " + " | ".join(scoring_list) + " |"
+        sep = "|------|" + "|".join(["------"] * len(scoring_list)) + "|"
+        cv_table = "\n".join([header, sep] + cv_rows)
+        cv_text = f"\n\n#### 📊 {cv_folds} 折交叉验证\n\n{cv_table}"
 
     metrics = {
         "accuracy": float(accuracy_score(y_te, y_pred)),
@@ -723,9 +796,10 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
     if model_name in tree_models:
         try:
             imp = model.feature_importances_
-            # 用特征维度数生成通用特征名
-            n_feat = X_tr.shape[1]
-            feat_names = [f"特征维度{i}" for i in range(min(len(imp), n_feat))]
+            # 使用实际特征名（如果有），否则用通用名
+            feat_names = data.get("feature_names")
+            if feat_names is None or len(feat_names) != X_tr.shape[1]:
+                feat_names = [f"特征{i}" for i in range(X_tr.shape[1])]
             fi_fig = _plot_feature_importance(imp[:len(feat_names)], feat_names)
         except Exception:
             pass
@@ -788,9 +862,10 @@ def _run_cnn(params, data, optimization, random_seed):
         random_state=random_seed, stratify=y_tr,
     )
 
-    train_ds = CrackDataset(train_imgs, y_tr, preprocess_fn=cnn_preprocess)
-    val_ds = CrackDataset(val_imgs, y_val, preprocess_fn=cnn_preprocess)
-    test_ds = CrackDataset(test_imgs, y_te, preprocess_fn=cnn_preprocess)
+    input_size = params.get("input_size", 128)
+    train_ds = CrackDataset(train_imgs, y_tr, input_size=input_size, preprocess_fn=cnn_preprocess)
+    val_ds = CrackDataset(val_imgs, y_val, input_size=input_size, preprocess_fn=cnn_preprocess)
+    test_ds = CrackDataset(test_imgs, y_te, input_size=input_size, preprocess_fn=cnn_preprocess)
 
     bs = params.get("batch_size", 64)
     train_loader = DataLoader(train_ds, batch_size=bs, shuffle=True)
@@ -801,6 +876,7 @@ def _run_cnn(params, data, optimization, random_seed):
     lr = float(params.get("learning_rate", 0.001))
     epochs = params.get("epochs", 30)
     patience = params.get("early_stopping_patience", 10)
+    weight_decay = float(params.get("weight_decay", 1e-4))
 
     # 确定预训练模型路径
     cnn_path = None
@@ -845,10 +921,11 @@ def _run_cnn(params, data, optimization, random_seed):
     else:
         if optimization == "pretrained":
             status_msgs.append("⚠️ 预训练模型未找到，使用完整训练")
+            optimization = "manual"
         else:
             status_msgs.append("🔄 开始 CNN 完整训练...")
 
-        # 构建损失函数
+        # 构建损失函数 (搜索和训练共用)
         if loss_fn_name == "cross_entropy":
             criterion = nn.CrossEntropyLoss()
         elif loss_fn_name == "focal":
@@ -864,11 +941,76 @@ def _run_cnn(params, data, optimization, random_seed):
         else:
             criterion = nn.CrossEntropyLoss()
 
+        # ---- CNN 参数搜索 ----
+        if optimization in ("grid_search", "random_search"):
+            cnn_grid = {
+                "learning_rate": [1e-4, 5e-4, 1e-3],
+                "dropout_rate": [0.3, 0.5, 0.7],
+                "batch_size": [32, 64],
+            }
+            import itertools as _it
+            all_combos = [dict(zip(cnn_grid, v))
+                          for v in _it.product(*cnn_grid.values())]
+            if optimization == "random_search":
+                rng = np.random.default_rng(random_seed)
+                n_iter_search = min(6, len(all_combos))
+                indices = rng.choice(len(all_combos), n_iter_search, replace=False)
+                all_combos = [all_combos[i] for i in indices]
+
+            search_epochs = 10
+            status_msgs.append(f"🔍 CNN {optimization}: {len(all_combos)} 组参数 × {search_epochs} epochs...")
+            best_f1, best_combo = -1, all_combos[0]
+            for ci, combo in enumerate(all_combos):
+                _m = CrackCNN(dropout_rate=combo["dropout_rate"]).to(DEVICE)
+                _opt = torch.optim.Adam(_m.parameters(), lr=combo["learning_rate"],
+                                        weight_decay=weight_decay)
+                _bs = combo["batch_size"]
+                _tl = DataLoader(train_ds, batch_size=_bs, shuffle=True)
+                _vl = DataLoader(val_ds, batch_size=_bs, shuffle=False)
+                _m.train()
+                for _ep in range(search_epochs):
+                    for _inp, _tgt in _tl:
+                        _inp, _tgt = _inp.to(DEVICE), _tgt.to(DEVICE)
+                        _opt.zero_grad()
+                        _out = _m(_inp)
+                        _loss = criterion(_out, _tgt)
+                        _loss.backward(); _opt.step()
+                _m.eval()
+                _preds, _tgts = [], []
+                with torch.no_grad():
+                    for _inp, _tgt in _vl:
+                        _inp = _inp.to(DEVICE)
+                        _out = _m(_inp)
+                        _, _p = _out.max(1)
+                        _preds.extend(_p.cpu().numpy())
+                        _tgts.extend(_tgt.numpy())
+                _f1 = f1_score(_tgts, _preds, zero_division=0)
+                status_msgs.append(f"  [{ci+1}/{len(all_combos)}] lr={combo['learning_rate']}, "
+                                   f"drop={combo['dropout_rate']}, bs={combo['batch_size']} "
+                                   f"→ val_f1={_f1:.4f}")
+                if _f1 > best_f1:
+                    best_f1 = _f1
+                    best_combo = combo
+                del _m, _opt
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+            lr = float(best_combo["learning_rate"])
+            dropout = float(best_combo["dropout_rate"])
+            bs = int(best_combo["batch_size"])
+            train_loader = DataLoader(train_ds, batch_size=bs, shuffle=True)
+            val_loader = DataLoader(val_ds, batch_size=bs, shuffle=False)
+            test_loader = DataLoader(test_ds, batch_size=bs, shuffle=False)
+            model = CrackCNN(dropout_rate=dropout).to(DEVICE)
+            status_msgs.append(f"✅ CNN 搜索完成: 最优 val_f1={best_f1:.4f}, "
+                               f"lr={lr}, dropout={dropout}, bs={bs}")
+
         opt_name = params.get("optimizer", "adam")
         if opt_name == "sgd":
-            optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+            optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9,
+                                        weight_decay=weight_decay)
         else:
-            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode="min", factor=0.5, patience=5)
@@ -967,7 +1109,7 @@ def _run_cnn(params, data, optimization, random_seed):
         f"| F1分数 | {metrics['f1']:.4f} |\n"
         f"| ROC-AUC | {metrics['roc_auc']:.4f} |\n"
         f"\n⏱ 耗时: {elapsed:.1f}s | 优化器: {params.get('optimizer','adam')} | "
-        f"lr={lr} | dropout={dropout}"
+        f"lr={lr} | dropout={dropout} | input_size={input_size} | wd={weight_decay}"
     )
 
     return {
@@ -1028,48 +1170,115 @@ def _run_unsupervised(method, params, data, optimization, random_seed):
             optimization = "manual"
 
     if optimization != "pretrained" or model is None:
-        if method == "kmeans":
-            from sklearn.cluster import KMeans
-            model = KMeans(n_clusters=n_clusters, random_state=random_seed, n_init="auto",
-                           algorithm=params.get("algorithm", "lloyd"))
-        elif method == "gmm":
-            from sklearn.mixture import GaussianMixture
-            model = GaussianMixture(n_components=n_clusters,
-                                    covariance_type=params.get("covariance_type", "full"),
-                                    random_state=random_seed)
-        elif method == "dbscan":
-            from sklearn.cluster import DBSCAN
-            model = DBSCAN(eps=float(params.get("eps", 0.5)),
-                           min_samples=int(params.get("min_samples", 5)))
-        elif method == "agglomerative":
-            from sklearn.cluster import AgglomerativeClustering
-            model = AgglomerativeClustering(n_clusters=n_clusters,
-                                            linkage=params.get("linkage", "ward"))
-        elif method == "spectral":
-            from sklearn.cluster import SpectralClustering
-            model = SpectralClustering(n_clusters=n_clusters,
-                                       affinity=params.get("affinity", "rbf"),
-                                       random_state=random_seed, n_init=10)
-        else:
-            raise ValueError(f"未知聚类方法: {method}")
+        # ---- 无监督参数搜索 ----
+        if optimization in ("grid_search", "random_search"):
+            from sklearn.cluster import KMeans as _KM, DBSCAN as _DB
+            from sklearn.mixture import GaussianMixture as _GMM
+            from sklearn.cluster import AgglomerativeClustering as _AG
+            from sklearn.cluster import SpectralClustering as _SC
 
-        labels_pred = model.fit_predict(X_scaled)
+            search_grids = {
+                "kmeans": {"n_clusters": [2, 3, 4, 5, 6, 8, 10]},
+                "gmm": {"covariance_type": ["full", "tied", "diag", "spherical"]},
+                "dbscan": {"eps": [0.3, 0.5, 0.8, 1.0, 1.5], "min_samples": [3, 5, 10, 20]},
+                "agglomerative": {"linkage": ["ward", "complete", "average", "single"]},
+                "spectral": {"affinity": ["rbf", "nearest_neighbors"]},
+            }
+            grid = search_grids.get(method, {})
+            if grid:
+                import itertools as _it
+                keys = list(grid.keys())
+                combos = [dict(zip(keys, v)) for v in _it.product(*grid.values())]
+                if optimization == "random_search":
+                    rng = np.random.default_rng(random_seed)
+                    n_pick = min(5, len(combos))
+                    combos = [combos[i] for i in rng.choice(len(combos), n_pick, replace=False)]
 
-        # DBSCAN: 检测并处理全噪声情况（默认 eps 在高维空间过于严格）
-        if method == "dbscan" and len(set(labels_pred)) <= 1 and all(lbl == -1 for lbl in labels_pred):
-            from sklearn.neighbors import NearestNeighbors
-            k = int(params.get("min_samples", 5))
-            nn = NearestNeighbors(n_neighbors=k)
-            nn.fit(X_scaled)
-            distances, _ = nn.kneighbors(X_scaled)
-            k_distances = np.sort(distances[:, -1])
-            # 取 k-distance 的 75 分位数作为 eps
-            auto_eps = float(np.percentile(k_distances, 75))
-            model = DBSCAN(eps=auto_eps, min_samples=k)
+                status_msgs.append(f"🔍 {method} {optimization}: {len(combos)} 组参数...")
+                best_sil, best_combo, best_labels = -1, combos[0], None
+
+                for ci, combo in enumerate(combos):
+                    try:
+                        if method == "kmeans":
+                            _m = _KM(n_clusters=combo["n_clusters"], random_state=random_seed, n_init="auto")
+                        elif method == "gmm":
+                            _m = _GMM(n_components=n_clusters, covariance_type=combo["covariance_type"],
+                                      random_state=random_seed)
+                        elif method == "dbscan":
+                            _m = _DB(eps=combo["eps"], min_samples=combo["min_samples"])
+                        elif method == "agglomerative":
+                            _m = _AG(n_clusters=n_clusters, linkage=combo["linkage"])
+                        elif method == "spectral":
+                            _m = _SC(n_clusters=n_clusters, affinity=combo["affinity"],
+                                     random_state=random_seed, n_init=10)
+                        else:
+                            continue
+
+                        _labels = _m.fit_predict(X_scaled)
+                        n_clust = len(set(_labels) - {-1})
+                        if n_clust < 2:
+                            status_msgs.append(f"  [{ci+1}] {combo} → 仅 {n_clust} 簇，跳过")
+                            continue
+                        _sil = silhouette_score(X_scaled, _labels)
+                        status_msgs.append(f"  [{ci+1}/{len(combos)}] {combo} → sil={_sil:.4f}, 簇数={n_clust}")
+                        if _sil > best_sil:
+                            best_sil = _sil
+                            best_combo = combo
+                            best_labels = _labels
+                            model = _m
+                    except Exception as _e:
+                        status_msgs.append(f"  [{ci+1}] {combo} → 失败: {_e}")
+
+                if best_labels is not None:
+                    labels_pred = best_labels
+                    status_msgs.append(f"✅ {method} 搜索完成: 最优 sil={best_sil:.4f}, 参数={best_combo}")
+                else:
+                    status_msgs.append("⚠️ 搜索未找到有效参数组合，回退到手动参数")
+                    optimization = "manual"
+
+        # ---- 手动参数训练 ----
+        if optimization == "manual" or labels_pred is None:
+            if method == "kmeans":
+                from sklearn.cluster import KMeans
+                model = KMeans(n_clusters=n_clusters, random_state=random_seed, n_init="auto",
+                               algorithm=params.get("algorithm", "lloyd"))
+            elif method == "gmm":
+                from sklearn.mixture import GaussianMixture
+                model = GaussianMixture(n_components=n_clusters,
+                                        covariance_type=params.get("covariance_type", "full"),
+                                        random_state=random_seed)
+            elif method == "dbscan":
+                from sklearn.cluster import DBSCAN
+                model = DBSCAN(eps=float(params.get("eps", 0.5)),
+                               min_samples=int(params.get("min_samples", 5)))
+            elif method == "agglomerative":
+                from sklearn.cluster import AgglomerativeClustering
+                model = AgglomerativeClustering(n_clusters=n_clusters,
+                                                linkage=params.get("linkage", "ward"))
+            elif method == "spectral":
+                from sklearn.cluster import SpectralClustering
+                model = SpectralClustering(n_clusters=n_clusters,
+                                           affinity=params.get("affinity", "rbf"),
+                                           random_state=random_seed, n_init=10)
+            else:
+                raise ValueError(f"未知聚类方法: {method}")
+
             labels_pred = model.fit_predict(X_scaled)
-            status_msgs.append(f"⚠️ 默认 eps 过小，自动调整为 eps={auto_eps:.3f}")
 
-        status_msgs.append(f"✅ {method} 训练完成")
+            # DBSCAN: 检测并处理全噪声情况
+            if method == "dbscan" and len(set(labels_pred)) <= 1 and all(lbl == -1 for lbl in labels_pred):
+                from sklearn.neighbors import NearestNeighbors
+                k = int(params.get("min_samples", 5))
+                nn = NearestNeighbors(n_neighbors=k)
+                nn.fit(X_scaled)
+                distances, _ = nn.kneighbors(X_scaled)
+                k_distances = np.sort(distances[:, -1])
+                auto_eps = float(np.percentile(k_distances, 75))
+                model = DBSCAN(eps=auto_eps, min_samples=k)
+                labels_pred = model.fit_predict(X_scaled)
+                status_msgs.append(f"⚠️ 默认 eps 过小，自动调整为 eps={auto_eps:.3f}")
+
+            status_msgs.append(f"✅ {method} 训练完成")
 
     elapsed = time.time() - t0
 
@@ -1139,12 +1348,13 @@ def run_pipeline(
     xgb_n_estimators, xgb_max_depth, xgb_subsample,
     lgbm_n_estimators, lgbm_max_depth, lgbm_num_leaves,
     cnn_dropout, cnn_batch_size, cnn_epochs, cnn_early_stopping,
+    cnn_input_size, cnn_weight_decay,
     unsup_n_clusters, unsup_eps, unsup_min_samples,
     # Step 4: 损失函数/优化器 (所有模型)
     dt_criterion,
     svm_kernel, svm_gamma,
     rf_criterion,
-    lr_penalty, lr_solver,
+    lr_penalty, lr_solver, lr_l1_ratio,
     xgb_objective, xgb_learning_rate,
     lgbm_objective, lgbm_learning_rate,
     cnn_loss_fn, cnn_focal_alpha, cnn_focal_gamma,
@@ -1156,6 +1366,7 @@ def run_pipeline(
     validation_method, scoring_metric,
     # 通用
     random_seed,
+    progress=gr.Progress(track_tqdm=False),
 ):
     """Gradio 统一入口：执行完整训练链路。"""
     t_total = time.time()
@@ -1163,20 +1374,25 @@ def run_pipeline(
 
     try:
         # ---- 准备数据 ----
+        progress(0.05, desc="加载数据...")
         status_msgs.append("⏳ 正在加载数据...")
         if preprocessing is None:
-            preprocessing = ["clahe", "median"]
+            preprocessing = "clahe+median"
         if features is None:
             features = ["hog", "lbp", "glcm", "edge_density"]
+
+        # preprocessing 是 Radio 单选 (str)，转为 list 供 prepare_data 使用
+        preprocessing_list = [preprocessing] if isinstance(preprocessing, str) else list(preprocessing)
 
         data = prepare_data(
             max_samples=int(max_samples),
             random_seed=int(random_seed),
             split_method=split_method,
             split_ratio=float(split_ratio),
-            preprocessing=list(preprocessing),
+            preprocessing=preprocessing_list,
             features=list(features),
         )
+        progress(0.2, desc="数据准备完成，构建模型参数...")
         status_msgs.append(f"✅ 数据准备完成: {data['config']['n_samples']} 样本, "
                            f"{data['X_train'].shape[1]} 维特征")
 
@@ -1209,6 +1425,7 @@ def run_pipeline(
                 "C": float(lr_C),
                 "penalty": lr_penalty,
                 "solver": lr_solver,
+                "l1_ratio": float(lr_l1_ratio),
                 "random_state": int(random_seed),
             },
             "xgboost": {
@@ -1240,6 +1457,8 @@ def run_pipeline(
             "batch_size": int(cnn_batch_size),
             "epochs": int(cnn_epochs),
             "early_stopping_patience": int(cnn_early_stopping),
+            "input_size": int(cnn_input_size) if cnn_input_size else 128,
+            "weight_decay": float(cnn_weight_decay) if cnn_weight_decay else 1e-4,
         }
 
         unsup_params = {
@@ -1253,6 +1472,7 @@ def run_pipeline(
         }
 
         # ---- 分发执行 ----
+        progress(0.3, desc=f"开始训练 {model_name}...")
         trad_models = ["decision_tree", "svm", "naive_bayes", "random_forest",
                        "logistic_regression", "xgboost", "lightgbm"]
         unsup_models = ["kmeans", "gmm", "dbscan", "agglomerative", "spectral"]
@@ -1272,9 +1492,11 @@ def run_pipeline(
         else:
             raise ValueError(f"未知模型: {model_name}")
 
+        progress(0.95, desc="生成可视化图表...")
         total_elapsed = time.time() - t_total
         result["status"] = "\n".join(status_msgs) + f"\n\n⏱ 总耗时: {total_elapsed:.1f}s\n" + result["status"]
 
+        progress(1.0, desc="完成!")
         return (
             result["status"],
             result["metrics_md"],
@@ -1384,8 +1606,10 @@ def _model_visibility(model_key):
         # Step 5: 验证方法
         "supervised_val": v(_is_supervised(model_key)),
         "unsup_val": v(_is_unsup(model_key)),
-        # Step 5: 优化目标 (监督模型 + 网格/随机搜索时显示, 这里先visible=True,由opt change控制)
+        # Step 5: 优化目标 (监督模型 + 网格/随机搜索时显示)
         "scoring_metric": v(_is_supervised(model_key)),
+        # Step 5: 无监督优化提示
+        "unsup_opt_info": v(_is_unsup(model_key)),
     }
 
 
@@ -1411,10 +1635,11 @@ def create_interface():
                 k_folds = gr.Slider(2, 10, 5, step=1, label="K折数", visible=False)
                 use_stratify = gr.Checkbox(True, label="分层抽样")
 
-                preprocessing = gr.CheckboxGroup(
+                preprocessing = gr.Radio(
                     choices=["none", "clahe", "gaussian", "median",
                              "clahe+gaussian", "clahe+median"],
-                    value=["clahe", "median"], label="预处理方法")
+                    value="clahe+median", label="预处理方法",
+                    info="选择一种预处理管线（互斥）")
 
                 features = gr.CheckboxGroup(
                     choices=["hog", "lbp", "glcm", "edge_density"],
@@ -1467,6 +1692,9 @@ def create_interface():
                     cnn_batch_size = gr.Slider(16, 256, 64, step=16, label="Batch Size")
                     cnn_epochs = gr.Slider(5, 100, 30, step=5, label="最大 Epochs")
                     cnn_early_stopping = gr.Slider(3, 30, 10, step=1, label="早停耐心值")
+                    cnn_input_size = gr.Dropdown(
+                        choices=[64, 128, 256], value=128, label="输入图像尺寸 (input_size)")
+                    cnn_weight_decay = gr.Number(1e-4, label="Weight Decay (L2正则)", precision=5)
                 # 无监督参数
                 with gr.Group(visible=False) as unsup_n_clusters:
                     unsup_n_clusters_val = gr.Slider(2, 10, 2, step=1, label="聚类数 (n_clusters)")
@@ -1494,10 +1722,18 @@ def create_interface():
                 with gr.Group(visible=False) as lr_loss:
                     lr_penalty = gr.Dropdown(["l1", "l2", "elasticnet"], value="l2", label="penalty (正则化)")
                     lr_solver = gr.Dropdown(["lbfgs", "liblinear", "saga"], value="lbfgs", label="solver (优化器)")
+                    lr_l1_ratio = gr.Slider(0.0, 1.0, 0.5, step=0.05,
+                                            label="l1_ratio (elasticnet 混合比例)",
+                                            visible=False)
                 # XGBoost loss
                 with gr.Group(visible=False) as xgb_loss:
                     xgb_objective = gr.Dropdown(["binary:logistic", "binary:hinge"], value="binary:logistic", label="objective (目标函数)")
                     xgb_learning_rate = gr.Slider(0.01, 0.5, 0.1, step=0.01, label="learning_rate (学习率)")
+                    xgb_hinge_warning = gr.Markdown(
+                        "⚠️ **注意**：`binary:hinge` 仅输出硬标签 (0/1)，无法产生概率估计，"
+                        "ROC-AUC 和 PR 曲线将不可用。",
+                        visible=False,
+                    )
                 # LightGBM loss
                 with gr.Group(visible=False) as lgbm_loss:
                     lgbm_objective = gr.Dropdown(["binary", "cross_entropy"], value="binary", label="objective (目标函数)")
@@ -1552,6 +1788,9 @@ def create_interface():
                         choices=["f1", "accuracy", "roc_auc", "precision", "recall"],
                         value="f1", label="优化目标指标 (GridSearch/RandomSearch时使用)")
 
+                with gr.Group(visible=False) as unsup_opt_info:
+                    gr.Markdown("*💡 聚类方法的 GridSearch/RandomSearch 使用 **轮廓系数 (Silhouette)** 作为搜索目标（非监督指标）。*")
+
                 random_seed = gr.Number(42, label="随机种子", precision=0)
 
                 run_btn = gr.Button("▶ 运行训练链路", variant="primary", size="lg")
@@ -1571,7 +1810,10 @@ def create_interface():
 
                 with gr.Row():
                     prob_plot = gr.Plot(label="预测概率分布")
-                    extra_plot = gr.Plot(label="训练曲线 / Silhouette 图")
+                    extra_plot = gr.Plot(label="训练曲线 / 特征重要性")
+
+                with gr.Row():
+                    extra_plot2 = gr.Plot(label="Silhouette / PCA 聚类")
 
         # ============================================================
         # 事件绑定
@@ -1612,6 +1854,22 @@ def create_interface():
             outputs=[cnn_focal_alpha, cnn_focal_gamma, cnn_label_smoothing_epsilon],
         )
 
+        # --- LR penalty 联动：elasticnet 时显示 l1_ratio ---
+        def _on_lr_penalty_change(penalty):
+            return gr.update(visible=(penalty == "elasticnet"))
+        lr_penalty.change(
+            fn=_on_lr_penalty_change, inputs=[lr_penalty],
+            outputs=[lr_l1_ratio],
+        )
+
+        # --- XGBoost objective 联动：binary:hinge 时显示警告 ---
+        def _on_xgb_objective_change(objective):
+            return gr.update(visible=(objective == "binary:hinge"))
+        xgb_objective.change(
+            fn=_on_xgb_objective_change, inputs=[xgb_objective],
+            outputs=[xgb_hinge_warning],
+        )
+
         # --- 模型切换联动 (最复杂的部分) ---
         def on_model_change(choice):
             if choice is None or choice.startswith("────"):
@@ -1640,6 +1898,7 @@ def create_interface():
                 # validation
                 vis["supervised_val"], vis["unsup_val"],
                 vis["scoring_metric"],
+                vis["unsup_opt_info"],
             ]
 
         # 收集所有需要联动控制的组件
@@ -1652,6 +1911,7 @@ def create_interface():
             kmeans_loss, gmm_loss, dbscan_loss_info, agg_loss, spec_loss,
             supervised_val, unsup_val,
             scoring_metric_grp,
+            unsup_opt_info,
         ]
 
         model_choice.change(
@@ -1672,11 +1932,12 @@ def create_interface():
             xgb_n_estimators, xgb_max_depth, xgb_subsample,
             lgbm_n_estimators, lgbm_max_depth, lgbm_num_leaves,
             cnn_dropout, cnn_batch_size, cnn_epochs, cnn_early_stopping,
+            cnn_input_size, cnn_weight_decay,
             unsup_n_clusters_val, unsup_eps, unsup_min_samples,
             dt_criterion,
             svm_kernel, svm_gamma,
             rf_criterion,
-            lr_penalty, lr_solver,
+            lr_penalty, lr_solver, lr_l1_ratio,
             xgb_objective, xgb_learning_rate,
             lgbm_objective, lgbm_learning_rate,
             cnn_loss_fn, cnn_focal_alpha, cnn_focal_gamma,
@@ -1690,7 +1951,7 @@ def create_interface():
 
         all_outputs = [
             status_output, metrics_output,
-            cm_plot, roc_plot, pr_plot, fi_plot, prob_plot, extra_plot, extra_plot,
+            cm_plot, roc_plot, pr_plot, fi_plot, prob_plot, extra_plot, extra_plot2,
         ]
 
         # 包装 run_pipeline 以将模型显示名转为内部key
@@ -1724,7 +1985,6 @@ def main():
         server_port=7860,
         share=False,
         show_error=True,
-        theme=gr.themes.Soft(primary_hue="blue"),
     )
 
 
