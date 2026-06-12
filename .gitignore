@@ -71,3 +71,4 @@ videos/*.mov
 !reports/.gitkeep
 !data/.gitkeep_backup/
 _backup/
+scripts/
