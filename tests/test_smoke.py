@@ -91,9 +91,7 @@ def test_crack_cnn_param_count():
 
     model = CrackCNN(num_classes=2, input_channels=1)
     total_params = sum(p.numel() for p in model.parameters())
-    # 占位实现参数量很小，正式实现后请调整此断言为：
-    # assert 500_000 <= total_params <= 2_000_000
-    assert total_params > 0
+    assert 500_000 <= total_params <= 2_000_000
     print(f"CrackCNN 参数量: {total_params:,}")
 
 
@@ -114,7 +112,38 @@ def test_import_metrics():
 
 def test_import_losses():
     """验证损失函数模块可正常导入。"""
-    from src.training.losses import get_cross_entropy_loss
+    from src.training.losses import FocalLoss, get_cross_entropy_loss
 
     loss_fn = get_cross_entropy_loss()
     assert loss_fn is not None
+
+    focal = FocalLoss(alpha=0.25, gamma=2.0)
+    assert focal is not None
+
+
+def test_import_trainer():
+    """验证训练器模块可正常导入。"""
+    from src.training.trainer import CNNTrainer
+
+    assert callable(getattr(CNNTrainer, "fit", None))
+    assert callable(getattr(CNNTrainer, "evaluate", None))
+
+
+def test_import_optimizers_module():
+    """验证超参数搜索模块可正常导入。"""
+    from src.training.optimizers import grid_search_cnn
+
+    assert callable(grid_search_cnn)
+
+
+def test_evaluation_metrics_extra():
+    """验证新增的评价指标函数可正常导入。"""
+    from src.evaluation.metrics import (
+        compute_metrics,
+        plot_confusion_matrix,
+        plot_roc_curve,
+    )
+
+    assert callable(compute_metrics)
+    assert callable(plot_confusion_matrix)
+    assert callable(plot_roc_curve)

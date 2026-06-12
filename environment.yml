@@ -29,19 +29,22 @@ dependencies:
   - tqdm=4.66.6
   - plotly=5.18.0
 
+  # 测试
+  - pytest=8.3.4
+
   # pip 补充包（conda 中没有或版本不合适）
   # 注意：PyTorch CUDA 版必须通过 pip + --extra-index-url 安装
   - pip
   - pip:
-    - --extra-index-url https://mirrors.aliyun.com/pytorch-wheels/cu118
-    - torch==2.1.1+cu118
-    - torchvision==0.16.1+cu118
-    # OpenCV（pip 版避免 conda DLL 冲突）
-    - opencv-python==4.9.0.80
-    # 工具与格式化
-    - ruff==0.15.11
-    - python-dotenv==1.0.0
-    - nbstripout==0.7.1
-    - timm==0.9.12
-    - xgboost==2.0.3
-    - tensorboard==2.15.1
+      - --extra-index-url https://mirrors.aliyun.com/pytorch-wheels/cu118
+      - torch==2.1.1+cu118
+      - torchvision==0.16.1+cu118
+      # OpenCV（pip 版避免 conda DLL 冲突）
+      - opencv-python==4.9.0.80
+      # 工具与格式化
+      - ruff==0.15.11
+      - python-dotenv==1.0.0
+      - nbstripout==0.7.1
+      - timm==0.9.12
+      - xgboost==2.0.3
+      - tensorboard==2.15.1

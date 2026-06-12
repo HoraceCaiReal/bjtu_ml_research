@@ -1,6 +1,5 @@
 """
-深度学习模型
-包含：自建小型 CNN（CrackCNN）用于裂纹图像二分类
+深度学习模型：自建小型 CNN（CrackCNN）用于裂纹图像二分类
 """
 
 import torch.nn as nn
@@ -9,82 +8,77 @@ from src.config import DEVICE
 
 
 class CrackCNN(nn.Module):
-    """自建小型卷积神经网络，用于 2 分类（有裂纹 / 无裂纹）。
+    """自建小型 CNN，4 个卷积块 + 全局平均池化 + 分类头，参数量约 1.17M。
 
-    设计原则：轻量级，适合 ~20000 张图像级别的数据集，
-    避免过拟合，训练时间可控。
-
-    预期结构（待实验确定具体层数和参数）：
-    - Conv Block 1: Conv2d → BatchNorm → ReLU → MaxPool
-    - Conv Block 2: Conv2d → BatchNorm → ReLU → MaxPool
-    - Conv Block 3: Conv2d → BatchNorm → ReLU → MaxPool
-    - Global Average Pooling 或 Flatten
-    - FC Block 1: Linear → ReLU → Dropout
-    - FC Block 2: Linear → 输出 2 类
+    输入：(N, 1, H, W)
+    输出：(N, 2) 类别 logits
+    推荐输入尺寸 ≥ 64×64。
     """
 
-    def __init__(self, num_classes: int = 2, input_channels: int = 1) -> None:
-        """
-        Parameters
-        ----------
-        num_classes : int
-            分类类别数（默认 2：有裂纹/无裂纹）。
-        input_channels : int
-            输入通道数（灰度图 = 1，RGB = 3）。
-        """
+    def __init__(
+        self,
+        num_classes: int = 2,
+        input_channels: int = 1,
+        dropout_rate: float = 0.5,
+    ) -> None:
         super().__init__()
         self.num_classes = num_classes
         self.input_channels = input_channels
-        # TODO: 替换为真实的网络层定义
-        # 设计约束：
-        #   - 总参数量控制在 500K - 2M 之间
-        #   - 使用 BatchNorm 加速收敛
-        #   - 使用 Dropout 防止过拟合
-        #   - 输入尺寸建议从 128x128 或 224x224 开始实验
-        #
-        # 占位层：确保模型可实例化以便调试和检查参数量，
-        # 实现时请替换为 Conv2d → BN → ReLU → MaxPool 等真实层。
-        self.features = nn.Identity()
-        self.classifier = nn.Linear(input_channels, num_classes)
+        self.dropout_rate = dropout_rate
+
+        # Block 1: 1 → 32
+        self.block1 = self._make_block(input_channels, 32)
+        # Block 2: 32 → 64
+        self.block2 = self._make_block(32, 64)
+        # Block 3: 64 → 128
+        self.block3 = self._make_block(64, 128)
+        # Block 4: 128 → 256
+        self.block4 = self._make_block(128, 256)
+
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.dropout = nn.Dropout(dropout_rate)
+        self.classifier = nn.Linear(256, num_classes)
+
+    @staticmethod
+    def _make_block(in_ch: int, out_ch: int) -> nn.Sequential:
+        """构建一个卷积块：Conv→BN→ReLU → Conv→BN→ReLU → MaxPool(2)。"""
+        return nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+        )
 
     def forward(self, x):
-        """
-        前向传播。
-
-        Parameters
-        ----------
-        x : torch.Tensor, shape (N, C, H, W)
-            输入图像批次。
-
-        Returns
-        -------
-        torch.Tensor, shape (N, num_classes)
-            类别 logits。
-        """
-        # TODO: 实现真实的前向传播逻辑
-        # 占位实现：展平后直接通过线性层，仅用于验证模型可实例化
-        x = self.features(x)
+        x = self.block1(x)
+        x = self.block2(x)
+        x = self.block3(x)
+        x = self.block4(x)
+        x = self.global_pool(x)
         x = x.view(x.size(0), -1)
+        x = self.dropout(x)
         x = self.classifier(x)
         return x
 
 
-def get_cnn_model(num_classes: int = 2, input_channels: int = 1, **kwargs):
-    """获取 CrackCNN 模型实例，自动加载到 GPU/CPU。
-
-    Parameters
-    ----------
-    num_classes : int
-        分类类别数。
-    input_channels : int
-        输入通道数。
-
-    Returns
-    -------
-    CrackCNN
-        已加载到 DEVICE 的模型实例。
-    """
-    model = CrackCNN(num_classes=num_classes, input_channels=input_channels, **kwargs)
+def get_cnn_model(
+    num_classes: int = 2,
+    input_channels: int = 1,
+    dropout_rate: float = 0.5,
+    **kwargs,
+):
+    """获取 CrackCNN 模型实例并加载到 DEVICE。"""
+    model = CrackCNN(
+        num_classes=num_classes,
+        input_channels=input_channels,
+        dropout_rate=dropout_rate,
+        **kwargs,
+    )
     model = model.to(DEVICE)
     print(f"CrackCNN 已加载到设备: {DEVICE}")
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"参数量: {total_params:,}")
     return model
