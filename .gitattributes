@@ -1,6 +1,3 @@
-# 自动清除 Jupyter Notebook 的输出（由 nbstripout 管理）
-*.ipynb filter=nbstripout
-
 # 确保文本文件使用 LF 换行符（跨平台一致性，与 Ruff line-ending=lf 和 VSCode files.eol 一致）
 *.py text eol=lf
 *.md text eol=lf

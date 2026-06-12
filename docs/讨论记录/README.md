@@ -2,7 +2,7 @@
 
 > 本目录保留用于存放需要长期归档的文档附件。
 > 
-> **日常技术讨论已迁移至 GitHub Issues：** [https://github.com/lijiawei255/bjtu_ml_research/issues](https://github.com/lijiawei255/bjtu_ml_research/issues)
+> **日常技术讨论已迁移至 GitHub Issues：** [https://github.com/HoraceCaiReal/bjtu_ml_research/issues](https://github.com/HoraceCaiReal/bjtu_ml_research/issues)
 
 ## 为什么用 GitHub Issues？
 
