@@ -208,6 +208,7 @@ def prepare_data(
     split_ratio: float = 0.7,
     preprocessing: list = None,
     features: list = None,
+    use_stratify: bool = True,
     **kwargs,
 ) -> dict:
     """统一数据管线：加载→预处理→提特征→划分。支持内存缓存。"""
@@ -218,7 +219,7 @@ def prepare_data(
 
     # 缓存检查
     _cache_key = (max_samples, tuple(preprocessing), tuple(features), random_seed,
-                  split_method, split_ratio)
+                  split_method, split_ratio, use_stratify)
     if _cache_key in _DATA_CACHE:
         print(f"prepare_data: 命中缓存 ({_DATA_CACHE[_cache_key]['config']['n_samples']} 样本)")
         return _DATA_CACHE[_cache_key]
@@ -274,7 +275,7 @@ def prepare_data(
     test_size = round(1.0 - split_ratio, 4)
     X_train, X_test, y_train, y_test = train_test_split(
         X_all, y_all, test_size=test_size,
-        random_state=random_seed, stratify=y_all,
+        random_state=random_seed, stratify=y_all if use_stratify else None,
     )
 
     result = {
@@ -657,7 +658,7 @@ def _get_param_grid(model_name):
 
 
 def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
-                     validation_method, random_seed):
+                     validation_method, random_seed, n_iter=30):
     """执行传统 ML 模型链路。"""
     from sklearn.pipeline import Pipeline
 
@@ -722,7 +723,7 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
                 search = GridSearchCV(base_model, pg, cv=cv_folds,
                                       scoring=scoring, n_jobs=-1, verbose=0)
             else:
-                search = RandomizedSearchCV(base_model, pg, n_iter=cv_folds * 3,
+                search = RandomizedSearchCV(base_model, pg, n_iter=n_iter,
                                             cv=cv_folds, scoring=scoring, n_jobs=-1,
                                             random_state=random_seed)
             search.fit(X_tr, y_tr)
@@ -830,7 +831,7 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
     }
 
 
-def _run_cnn(params, data, optimization, random_seed):
+def _run_cnn(params, data, optimization, random_seed, n_iter=6, scoring_metric="f1"):
     """执行 CNN 模型链路。"""
     status_msgs = []
     loss_fn_name = params.get("loss_fn", "cross_entropy")
@@ -953,13 +954,13 @@ def _run_cnn(params, data, optimization, random_seed):
                           for v in _it.product(*cnn_grid.values())]
             if optimization == "random_search":
                 rng = np.random.default_rng(random_seed)
-                n_iter_search = min(6, len(all_combos))
+                n_iter_search = min(int(n_iter), len(all_combos))
                 indices = rng.choice(len(all_combos), n_iter_search, replace=False)
                 all_combos = [all_combos[i] for i in indices]
 
             search_epochs = 10
             status_msgs.append(f"🔍 CNN {optimization}: {len(all_combos)} 组参数 × {search_epochs} epochs...")
-            best_f1, best_combo = -1, all_combos[0]
+            best_score, best_combo = -1, all_combos[0]
             for ci, combo in enumerate(all_combos):
                 _m = CrackCNN(dropout_rate=combo["dropout_rate"]).to(DEVICE)
                 _opt = torch.optim.Adam(_m.parameters(), lr=combo["learning_rate"],
@@ -984,12 +985,21 @@ def _run_cnn(params, data, optimization, random_seed):
                         _, _p = _out.max(1)
                         _preds.extend(_p.cpu().numpy())
                         _tgts.extend(_tgt.numpy())
-                _f1 = f1_score(_tgts, _preds, zero_division=0)
+                if scoring_metric == "accuracy":
+                    _score = accuracy_score(_tgts, _preds)
+                elif scoring_metric == "precision":
+                    _score = precision_score(_tgts, _preds, zero_division=0)
+                elif scoring_metric == "recall":
+                    _score = recall_score(_tgts, _preds, zero_division=0)
+                elif scoring_metric == "roc_auc":
+                    _score = roc_auc_score(_tgts, _preds)
+                else:  # f1
+                    _score = f1_score(_tgts, _preds, zero_division=0)
                 status_msgs.append(f"  [{ci+1}/{len(all_combos)}] lr={combo['learning_rate']}, "
                                    f"drop={combo['dropout_rate']}, bs={combo['batch_size']} "
-                                   f"→ val_f1={_f1:.4f}")
-                if _f1 > best_f1:
-                    best_f1 = _f1
+                                   f"→ val_{scoring_metric}={_score:.4f}")
+                if _score > best_score:
+                    best_score = _score
                     best_combo = combo
                 del _m, _opt
                 if torch.cuda.is_available():
@@ -1002,7 +1012,7 @@ def _run_cnn(params, data, optimization, random_seed):
             val_loader = DataLoader(val_ds, batch_size=bs, shuffle=False)
             test_loader = DataLoader(test_ds, batch_size=bs, shuffle=False)
             model = CrackCNN(dropout_rate=dropout).to(DEVICE)
-            status_msgs.append(f"✅ CNN 搜索完成: 最优 val_f1={best_f1:.4f}, "
+            status_msgs.append(f"✅ CNN 搜索完成: 最优 val_{scoring_metric}={best_score:.4f}, "
                                f"lr={lr}, dropout={dropout}, bs={bs}")
 
         opt_name = params.get("optimizer", "adam")
@@ -1124,7 +1134,8 @@ def _run_cnn(params, data, optimization, random_seed):
     }
 
 
-def _run_unsupervised(method, params, data, optimization, random_seed):
+def _run_unsupervised(method, params, data, optimization, random_seed, n_iter=5,
+                      unsup_val_method="internal_external"):
     """执行无监督聚类链路。"""
     status_msgs = []
     X_all = np.vstack([data["X_train"], data["X_test"]])
@@ -1191,7 +1202,7 @@ def _run_unsupervised(method, params, data, optimization, random_seed):
                 combos = [dict(zip(keys, v)) for v in _it.product(*grid.values())]
                 if optimization == "random_search":
                     rng = np.random.default_rng(random_seed)
-                    n_pick = min(5, len(combos))
+                    n_pick = min(int(n_iter), len(combos))
                     combos = [combos[i] for i in rng.choice(len(combos), n_pick, replace=False)]
 
                 status_msgs.append(f"🔍 {method} {optimization}: {len(combos)} 组参数...")
@@ -1305,14 +1316,28 @@ def _run_unsupervised(method, params, data, optimization, random_seed):
     cluster_fig = _plot_pca_clusters(X_2d, labels_pred, y_all, method)
     sil_fig = _plot_silhouette(X_scaled, labels_pred)
 
-    metrics_md = (
-        f"### 📈 聚类评估 ({method})\n\n"
-        f"| 指标类别 | 指标 | 值 |\n|------|------|------|\n"
+    # 根据评估范围构建指标表
+    _internal_rows = (
         f"| 内部 | 轮廓系数 | {sil:.4f} |\n"
         f"| 内部 | Davies-Bouldin | {db:.4f} |\n"
         f"| 内部 | Calinski-Harabasz | {ch:.2f} |\n"
+    )
+    _external_rows = (
         f"| 外部 | ARI | {ari:.4f} |\n"
         f"| 外部 | NMI | {nmi:.4f} |\n"
+    )
+    _show_internal = unsup_val_method in ("internal_external", "internal_only")
+    _show_external = unsup_val_method in ("internal_external", "external_only")
+    _rows = ""
+    if _show_internal:
+        _rows += _internal_rows
+    if _show_external:
+        _rows += _external_rows
+
+    metrics_md = (
+        f"### 📈 聚类评估 ({method})\n\n"
+        f"| 指标类别 | 指标 | 值 |\n|------|------|------|\n"
+        f"{_rows}"
         f"\n⏱ 耗时: {elapsed:.1f}s | 簇数: {len(set(labels_pred))}"
     )
 
@@ -1335,7 +1360,7 @@ def _run_unsupervised(method, params, data, optimization, random_seed):
 
 def run_pipeline(
     # Step 1: 数据处理
-    split_method, split_ratio, k_folds, use_stratify,
+    split_method, split_ratio, use_stratify,
     preprocessing, features, max_samples,
     # Step 2: 模型选择
     model_name,
@@ -1364,6 +1389,7 @@ def run_pipeline(
     # Step 5: 参数优化 + 验证 + 指标
     optimization_strategy, cv_folds_opt, n_iter,
     validation_method, scoring_metric,
+    unsup_val_method,
     # 通用
     random_seed,
     progress=gr.Progress(track_tqdm=False),
@@ -1391,6 +1417,7 @@ def run_pipeline(
             split_ratio=float(split_ratio),
             preprocessing=preprocessing_list,
             features=list(features),
+            use_stratify=use_stratify,
         )
         progress(0.2, desc="数据准备完成，构建模型参数...")
         status_msgs.append(f"✅ 数据准备完成: {data['config']['n_samples']} 样本, "
@@ -1482,12 +1509,17 @@ def run_pipeline(
                 model_name, trad_params_map[model_name], data,
                 optimization_strategy, int(cv_folds_opt) if cv_folds_opt else 3,
                 scoring_metric, validation_method, int(random_seed),
+                n_iter=int(n_iter) if n_iter else 30,
             )
         elif model_name == "cnn":
-            result = _run_cnn(cnn_params, data, optimization_strategy, int(random_seed))
+            result = _run_cnn(cnn_params, data, optimization_strategy, int(random_seed),
+                            n_iter=int(n_iter) if n_iter else 6,
+                            scoring_metric=scoring_metric)
         elif model_name in unsup_models:
             result = _run_unsupervised(
                 model_name, unsup_params, data, optimization_strategy, int(random_seed),
+                n_iter=int(n_iter) if n_iter else 5,
+                unsup_val_method=unsup_val_method,
             )
         else:
             raise ValueError(f"未知模型: {model_name}")
@@ -1604,7 +1636,7 @@ def _model_visibility(model_key):
         "agg_loss": v(model_key == "agglomerative"),
         "spec_loss": v(model_key == "spectral"),
         # Step 5: 验证方法
-        "supervised_val": v(_is_supervised(model_key)),
+        "supervised_val": v(_is_supervised(model_key) and not _is_cnn(model_key)),
         "unsup_val": v(_is_unsup(model_key)),
         # Step 5: 优化目标 (监督模型 + 网格/随机搜索时显示)
         "scoring_metric": v(_is_supervised(model_key)),
@@ -1629,10 +1661,9 @@ def create_interface():
                 gr.Markdown("### 📊 Step 1: 数据处理")
 
                 split_method = gr.Dropdown(
-                    choices=["holdout", "kfold"], value="holdout", label="划分方法")
+                    choices=["holdout"], value="holdout", label="划分方法")
                 split_ratio = gr.Slider(0.5, 0.9, 0.7, step=0.05, label="训练集比例",
                                         visible=True)
-                k_folds = gr.Slider(2, 10, 5, step=1, label="K折数", visible=False)
                 use_stratify = gr.Checkbox(True, label="分层抽样")
 
                 preprocessing = gr.Radio(
@@ -1752,6 +1783,7 @@ def create_interface():
                 # GMM loss
                 with gr.Group(visible=False) as gmm_loss:
                     gmm_covariance_type = gr.Dropdown(["full", "tied", "diag", "spherical"], value="full", label="covariance_type (协方差类型)")
+                    gr.Markdown("⚠️ *`full` 协方差在高维特征下模型文件约 778MB，加载较慢。*")
                 # DBSCAN (无显式损失)
                 with gr.Group(visible=False) as dbscan_loss_info:
                     gr.Markdown("*基于密度的聚类，无显式损失函数；通过密度可达性定义簇。*")
@@ -1819,17 +1851,6 @@ def create_interface():
         # 事件绑定
         # ============================================================
 
-        # --- 划分方法联动 ---
-        def _on_split_change(method):
-            return (
-                gr.update(visible=(method == "holdout")),
-                gr.update(visible=(method == "kfold")),
-            )
-        split_method.change(
-            fn=_on_split_change, inputs=[split_method],
-            outputs=[split_ratio, k_folds],
-        )
-
         # --- 优化策略联动 ---
         def _on_opt_change(strategy):
             is_search = strategy in ("grid_search", "random_search")
@@ -1854,20 +1875,50 @@ def create_interface():
             outputs=[cnn_focal_alpha, cnn_focal_gamma, cnn_label_smoothing_epsilon],
         )
 
-        # --- LR penalty 联动：elasticnet 时显示 l1_ratio ---
+        # --- LR penalty 联动：elasticnet 时显示 l1_ratio，并过滤 solver ---
         def _on_lr_penalty_change(penalty):
-            return gr.update(visible=(penalty == "elasticnet"))
+            if penalty == "l2":
+                solver_choices = ["lbfgs", "liblinear", "saga"]
+                solver_value = "lbfgs"
+            elif penalty == "l1":
+                solver_choices = ["liblinear", "saga"]
+                solver_value = "liblinear"
+            else:  # elasticnet
+                solver_choices = ["saga"]
+                solver_value = "saga"
+            return (
+                gr.update(visible=(penalty == "elasticnet")),
+                gr.update(choices=solver_choices, value=solver_value),
+            )
         lr_penalty.change(
             fn=_on_lr_penalty_change, inputs=[lr_penalty],
-            outputs=[lr_l1_ratio],
+            outputs=[lr_l1_ratio, lr_solver],
         )
 
-        # --- XGBoost objective 联动：binary:hinge 时显示警告 ---
+        # --- XGBoost objective 联动：binary:hinge 时显示警告并移除 roc_auc ---
         def _on_xgb_objective_change(objective):
-            return gr.update(visible=(objective == "binary:hinge"))
+            is_hinge = (objective == "binary:hinge")
+            if is_hinge:
+                scoring_choices = ["f1", "accuracy", "precision", "recall"]
+                scoring_value = "f1"
+            else:
+                scoring_choices = ["f1", "accuracy", "roc_auc", "precision", "recall"]
+                scoring_value = None  # 保持当前值，不强制切换
+            return (
+                gr.update(visible=is_hinge),
+                gr.update(choices=scoring_choices, value=scoring_value),
+            )
         xgb_objective.change(
             fn=_on_xgb_objective_change, inputs=[xgb_objective],
-            outputs=[xgb_hinge_warning],
+            outputs=[xgb_hinge_warning, scoring_metric],
+        )
+
+        # --- SVM kernel 联动：linear 时隐藏 gamma ---
+        def _on_svm_kernel_change(kernel):
+            return gr.update(visible=(kernel != "linear"))
+        svm_kernel.change(
+            fn=_on_svm_kernel_change, inputs=[svm_kernel],
+            outputs=[svm_gamma],
         )
 
         # --- 模型切换联动 (最复杂的部分) ---
@@ -1922,7 +1973,7 @@ def create_interface():
 
         # --- 运行按钮 ---
         all_inputs = [
-            split_method, split_ratio, k_folds, use_stratify,
+            split_method, split_ratio, use_stratify,
             preprocessing, features, max_samples,
             model_choice,
             dt_max_depth, dt_min_samples_split,
@@ -1946,6 +1997,7 @@ def create_interface():
             agg_linkage, spec_affinity,
             optimization_strategy, cv_folds_opt, n_iter,
             validation_method, scoring_metric,
+            unsup_val_method,
             random_seed,
         ]
 
@@ -1958,11 +2010,11 @@ def create_interface():
         def _run_wrapper(*args):
             # args[7] 是 model_choice
             args_list = list(args)
-            choice = args_list[7]
+            choice = args_list[6]
             if choice and not choice.startswith("────"):
-                args_list[7] = MODEL_KEY_MAP.get(choice, "random_forest")
+                args_list[6] = MODEL_KEY_MAP.get(choice, "random_forest")
             else:
-                args_list[7] = "random_forest"
+                args_list[6] = "random_forest"
             return run_pipeline(*args_list)
 
         run_btn.click(
