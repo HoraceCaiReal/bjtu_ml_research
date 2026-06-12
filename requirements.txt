@@ -7,6 +7,7 @@ torchvision==0.16.1+cu118
 scikit-learn==1.4.2          # 决策树、SVM、K-Means
 scikit-image==0.22.0         # 图像预处理（特征提取等）
 xgboost==2.0.3               # 可选：梯度提升树对比
+lightgbm==4.3.0              # 可选：高效梯度提升树对比
 
 # ---------- 预训练模型库（可选扩展） ----------
 timm==0.9.12                 # PyTorch Image Models

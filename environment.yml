@@ -47,4 +47,5 @@ dependencies:
       - nbstripout==0.7.1
       - timm==0.9.12
       - xgboost==2.0.3
+      - lightgbm==4.3.0
       - tensorboard==2.15.1

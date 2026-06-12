@@ -69,4 +69,5 @@ videos/*.mov
 # 但保留目录说明
 !videos/.gitkeep
 !reports/.gitkeep
-!data/.gitkeep
+!data/.gitkeep_backup/
+_backup/

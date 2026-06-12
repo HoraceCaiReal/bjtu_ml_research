@@ -46,11 +46,7 @@ copy .env.example .env
 # 直接用 VSCode 打开 .ipynb 文件即可，VSCode 内置了 Jupyter 支持，无需额外启动
 ```
 
-> **字体说明**：VSCode 编辑器保持系统默认字体。在 VSCode 中运行 Notebook 画图时，运行：
-> ```python
-> from src.plot_config import set_chinese_font
-> set_chinese_font()
-> ```
+> **字体说明**：VSCode 编辑器保持系统默认字体。Notebook 中已内置中文字体配置代码，无需额外导入。
 >
 > **数据集路径**：代码通过 `.env` 文件读取 `CRACK_DATA_ROOT`，不上传 Git。各成员各自配置自己的路径。
 
@@ -172,33 +168,22 @@ git push origin feature/你的分支
 bjtu_ml_research/
 ├── .vscode/
 │   └── settings.json               # 团队共享 VSCode 配置
+├── _backup/                        # 旧版代码备份（src/ 和 tests/）
 ├── data/                           # 数据集（被 .gitignore 忽略，不上传）
 │   ├── Negative/                   # 20000 张无裂纹图像（本地存放）
-│   └── Positive/                   # 20000 张有裂纹图像（本地存放）
+│   ├── Positive/                   # 20000 张有裂纹图像（本地存放）
+│   └── real_test/                  # 真实裂缝测试图片
 ├── docs/                           # 文档、讨论记录、分工说明
 │   ├── 分工说明.md
 │   ├── 目录结构说明.md
 │   └── 讨论记录/                   # 每次讨论新建一个 md 文件
-├── notebooks/                      # Jupyter Notebook（研究报告主体）
-│   ├── 01_data_exploration.ipynb       # 数据探索与预处理：CLAHE、高斯滤波、中值滤波
-│   ├── 02_traditional_ml.ipynb         # 传统机器学习：HOG+LBP+GLCM+边缘密度 → 决策树/SVM/KNN
-│   ├── 03_unsupervised.ipynb           # 无监督聚类：K-Means/GMM/DBSCAN + Agglomerative/谱聚类
-│   ├── 04_deep_learning.ipynb          # 深度学习：自建小型 CNN 训练与调参
-│   └── 05_comparison.ipynb             # 综合对比分析与结论
-├── src/                            # 纯 Python 模块（供 notebooks 调用）
-│   ├── data_utils.py               # 数据预处理：CLAHE、高斯滤波、中值滤波；特征提取：HOG、LBP、GLCM、边缘密度
-│   ├── models/
-│   │   ├── traditional.py          # 决策树、SVM、KNN（特征：HOG + LBP + GLCM + 边缘密度）
-│   │   ├── unsupervised.py         # K-Means、GMM、DBSCAN（核心）；Agglomerative、谱聚类（补充）
-│   │   └── cnn.py                  # 自建小型 CNN（CrackCNN）
-│   ├── plot_config.py              # Matplotlib 中文字体配置
-│   ├── training/
-│   │   ├── losses.py               # 损失函数
-│   │   └── optimizers.py           # 参数搜索/调优
-│   └── evaluation/
-│       └── metrics.py              # 评价指标
-├── tests/                          # 冒烟测试与单元测试
-│   └── test_smoke.py               # 基础导入与实例化测试
+├── notebooks/                      # Jupyter Notebook（研究报告主体，所有代码内联于此）
+│   ├── 01_数据处理与特征工程.ipynb     # 数据加载、划分策略、预处理、特征提取对比
+│   ├── 02_传统监督学习对比.ipynb       # 7种分类器（DT/SVM/NB/RF/LR/XGBoost/LightGBM）
+│   ├── 03_深度学习对比.ipynb           # CrackCNN + 6种损失函数 + 超参数搜索
+│   ├── 04_无监督学习对比.ipynb         # 5种聚类方法对比
+│   └── 05_Gradio接口规范.ipynb         # 可视化系统统一接口规范
+├── scripts/                        # 辅助脚本
 ├── reports/                        # 导出的 PDF/HTML 报告（保留目录，不上传大文件）
 ├── videos/                         # 操作演示视频（保留目录，不上传大文件）
 ├── outputs/                        # 实验输出（图片、日志等）
@@ -226,12 +211,7 @@ copy .env.example .env
 # CRACK_DATA_ROOT=D:/课程数据/裂纹图像
 ```
 
-代码中通过 `src.config.DATA_ROOT` 读取：
-
-```python
-from src.config import DATA_ROOT, POSITIVE_DIR, NEGATIVE_DIR
-print(DATA_ROOT)  # 显示你配置的路径
-```
+Notebook 中内置了 `.env` 读取和数据路径配置代码，运行第一个 cell 即可验证数据路径是否正确。
 
 **为什么这样做？**
 - 各成员电脑路径不同，不能写死在代码里
@@ -351,9 +331,9 @@ conda config --set show_channel_urls yes
 
 | 提交物 | 存放位置 | 说明 |
 |--------|----------|------|
-| 研究报告 | `notebooks/05_comparison.ipynb` | Jupyter Notebook 格式，含背景、分工、讨论记录、代码、实验结果 |
+| 研究报告 | `notebooks/` | 5 个 Jupyter Notebook，含背景、分工、讨论记录、代码、实验结果 |
 | 操作视频 | `videos/` | 录制各 notebook 的操作过程（不上传 Git，单独提交） |
-| 源代码 | `src/` + `notebooks/` | 已通过 GitHub 仓库提交，老师可查看完整历史 |
+| 源代码 | `notebooks/` | 所有代码内联在 Notebook 中，已通过 GitHub 仓库提交 |
 | 数据集 | 不提交 | 数据保密，仅本地存放 |
 
 ### 5.2 导出 Notebook 为 PDF/HTML（备用）
@@ -373,7 +353,7 @@ jupyter nbconvert --to pdf notebooks/05_comparison.ipynb
 - 内容：
   1. 在 VSCode 中分别运行 notebooks/ 下的 5 个 notebook
   2. 演示数据处理方式的选择与切换
-  3. 演示不同模型对比（决策树 / SVM / KNN / GMM / DBSCAN / CNN）
+  3. 演示不同模型对比（决策树 / SVM / 朴素贝叶斯 / 随机森林 / XGBoost / LightGBM / CNN / 聚类方法）
   4. 演示超参数调整与实时结果查看
   5. 演示测试集验证与指标输出
 - 时长：5-10 分钟
@@ -432,11 +412,11 @@ git push origin main
 - [ ] `conda env create -f environment.yml` 成功，无报错
 - [ ] `conda activate bjtu_ml` 后，能 `import torch, sklearn, cv2, ipywidgets`
 - [ ] 已复制 `.env.example` 为 `.env` 并配置好数据集路径
-- [ ] 运行 `python -c "from src.config import DATA_ROOT, check_data_exists; print(DATA_ROOT); check_data_exists()"` 能正确检查数据集路径
+- [ ] 打开 `notebooks/01_数据处理与特征工程.ipynb`，运行第一个 cell 能正确加载数据集
 - [ ] `nbstripout --install` 已执行
 - [ ] VSCode 解释器已选择为 `bjtu_ml (conda)`
 - [ ] VSCode 能正常打开并运行 .ipynb 文件（已安装 Jupyter 插件）
-- [ ] `from src.plot_config import set_chinese_font; set_chinese_font()` 后 matplotlib 中文正常
+- [ ] Notebook 中运行 matplotlib 绘图后中文正常显示
 - [ ] 管理员成功创建一个 feature 分支、开发、合并到 main
 - [ ] 协作者成功创建一个 feature 分支、开发、合并到 main
 - [ ] 各成员各创建一个 GitHub Issue 测试讨论流程
