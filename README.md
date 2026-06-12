@@ -172,7 +172,6 @@ bjtu_ml_research/
 ├── data/                           # 数据集（被 .gitignore 忽略，不上传）
 │   ├── Negative/                   # 20000 张无裂纹图像（本地存放）
 │   ├── Positive/                   # 20000 张有裂纹图像（本地存放）
-│   └── real_test/                  # 真实裂缝测试图片
 ├── docs/                           # 文档、讨论记录、分工说明
 │   ├── 分工说明.md
 │   ├── 目录结构说明.md
