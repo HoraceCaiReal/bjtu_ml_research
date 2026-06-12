@@ -1,0 +1,8 @@
+﻿model,cv_f1,test_f1,test_auc,time_s
+xgboost,0.9715,0.9497,0.9816,165.2
+random_forest,0.9495,0.9438,0.9928,6.8
+lightgbm,0.9738,0.9438,0.986,96.0
+svm,0.9457,0.9371,0.9865,121.8
+logistic_regression,0.9665,0.9371,0.9911,3.2
+decision_tree,0.9334,0.918,0.9167,18.7
+naive_bayes,0.9059,0.908,0.9478,0.9

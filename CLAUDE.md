@@ -53,6 +53,9 @@ The project follows a **notebook-only architecture**: all Python code is inline 
 - **Gradio interfaces are reserved**: each notebook ends with Gradio callback function signatures (stubs with `raise NotImplementedError`), ready for Phase 2 visualization system development.
 - **Chinese documentation**: all markdown explanations and code comments in Chinese.
 - **PDF compliance**: each notebook's structure maps to the "机器学习理论部分" five aspects (data processing, model selection, loss measurement, parameter optimization, model validation).
+- **Pretrained models**: 16 models saved to `outputs/models/` (7 traditional + 6 CNN + 3 unsupervised) for the Gradio visualization system. Traditional models store best hyperparams from GridSearchCV; CNN models store weights from 15-epoch training with proper train/val/test split. DBSCAN excluded — no valid 2-cluster params found on this dataset.
+- **Data pipeline**: features are extracted per-image after train/test split (not before), preventing accidental global-statistics leakage. `prepare_data()` in NB05 provides a unified pipeline for fair cross-model comparison.
+- **FocalLoss**: `alpha=None` (default) skips class balancing — correct for this balanced dataset. Old implementation compressed all gradients to 25% (F1≈0.09); fixed June 2026.
 
 ### Model Coverage
 
@@ -69,7 +72,7 @@ The project follows a **notebook-only architecture**: all Python code is inline 
 
 ### Loss Functions (CNN only, 03 notebook)
 
-CrossEntropy, Focal Loss (3 configs), Label Smoothing CE, Dice Loss — 6 total configurations.
+CrossEntropy, Focal Loss (focal_gamma2: γ=2 无类别权重; focal_gamma3: γ=3 无类别权重; focal_balanced: α=0.5, γ=2), Label Smoothing CE, Dice Loss — 6 total configurations. FocalLoss `alpha=None` (default) omits class balancing, suitable for this balanced dataset (20k/20k).
 
 ### Data Split Methods (01 notebook)
 

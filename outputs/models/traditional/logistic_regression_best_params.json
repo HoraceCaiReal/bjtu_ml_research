@@ -1,0 +1,5 @@
+{
+  "m__C": 10,
+  "m__penalty": "l1",
+  "m__solver": "liblinear"
+}

@@ -58,6 +58,12 @@ Thumbs.db
 # 使用 xxx/* 而非 xxx/ 以确保 .gitkeep 能被 Git 追踪
 outputs/*
 !outputs/.gitkeep
+# 预训练模型和结果对比表提交到 Git（可视化系统需要）
+!outputs/models/
+!outputs/scalers/
+!outputs/results/
+# GMM 全协方差模型过大（~778MB），不提交，handler 运行时现场训练
+outputs/models/unsupervised/gmm_best.joblib
 results/*
 logs/*
 
