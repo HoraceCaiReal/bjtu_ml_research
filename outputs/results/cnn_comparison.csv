@@ -1,0 +1,7 @@
+﻿loss,val_f1,test_f1,test_acc,train_time_s,epochs
+focal_gamma2,1.0,0.998,0.998,17.7,15
+focal_gamma3,1.0,0.998,0.998,17.8,15
+label_smoothing,1.0,0.996,0.996,17.9,15
+dice,1.0,0.996,0.996,18.0,15
+focal_balanced,1.0,0.994,0.994,18.1,15
+cross_entropy,1.0,0.992,0.992,18.2,15

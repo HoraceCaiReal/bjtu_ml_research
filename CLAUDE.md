@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Crack image recognition system (裂纹图像识别系统) for the BJTU "Machine Learning & Python Programming" course research project. The system classifies road surface images as cracked (Positive) or non-cracked (Negative) using traditional ML, unsupervised clustering, and a custom CNN.
 
+All implementation code is self-contained within Jupyter notebooks — there is no separate `src/` module system.
+
 ## Environment Setup
 
 - **Python 3.10**, conda environment name: `bjtu_ml`
@@ -19,49 +21,62 @@ Crack image recognition system (裂纹图像识别系统) for the BJTU "Machine 
 ## Commands
 
 ```bash
-# Run all tests
-pytest tests/ -v
+# Lint and format Python files (Ruff replaces Black + Flake8 + isort)
+ruff check .
+ruff format .
 
-# Run a single test
-pytest tests/test_smoke.py::test_crack_cnn_instantiation -v
-
-# Lint and format (Ruff replaces Black + Flake8 + isort)
-ruff check src/ tests/
-ruff format src/ tests/
-
-# Verify data path config
-python -c "from src.config import DATA_ROOT, check_data_exists; print(DATA_ROOT); check_data_exists()"
+# Verify data path config (.env)
+python -c "
+import os; from pathlib import Path; from dotenv import load_dotenv
+load_dotenv('.env')
+print(os.getenv('CRACK_DATA_ROOT'))
+"
 ```
 
 ## Architecture
 
-The project follows a **notebook-driven workflow**: Jupyter notebooks in `notebooks/` are the primary research artifacts, calling reusable Python modules from `src/`.
+The project follows a **notebook-only architecture**: all Python code is inline within Jupyter notebooks. Each notebook is a self-contained deliverable that can be run independently.
 
-### Notebook Pipeline (sequential)
-
-`01_data_exploration` → `02_traditional_ml` → `03_unsupervised` → `04_deep_learning` → `05_comparison`
-
-### Key `src/` Modules
-
-- **`src/config.py`** — Central configuration. Loads `.env` via `python-dotenv`, resolves `DATA_ROOT`/`POSITIVE_DIR`/`NEGATIVE_DIR`, auto-detects `DEVICE` (cuda/cpu). All other modules import paths and device from here.
-- **`src/data_utils.py`** — Image preprocessing (CLAHE, Gaussian, median filters) and feature extraction (HOG, LBP, GLCM, edge density). Also provides `load_dataset()` and `split_dataset()`.
-- **`src/models/traditional.py`** — Wraps sklearn DecisionTree/SVM/KNN behind a unified `TraditionalClassifier` interface with a `compare_classifiers()` function.
-- **`src/models/unsupervised.py`** — Wraps K-Means, GMM, DBSCAN (+ Agglomerative, Spectral) with a `UnsupervisedPipeline` for running all methods and comparing results.
-- **`src/models/cnn.py`** — `CrackCNN`: lightweight CNN for binary classification. Design constraint: 500K–2M parameters, BatchNorm + Dropout. `get_cnn_model()` auto-loads to DEVICE.
-- **`src/evaluation/metrics.py`** — Re-exports sklearn metrics (accuracy, precision, recall, F1, confusion matrix, classification report).
-- **`src/training/losses.py`** — Cross-entropy loss factory; extensible for Focal Loss etc.
-- **`src/training/optimizers.py`** — Placeholder for hyperparameter search and LR scheduling.
-- **`src/plot_config.py`** — `set_chinese_font()` configures matplotlib to use Microsoft YaHei. Call at the top of every notebook before plotting.
-
-### Data Flow
+### Notebook Pipeline
 
 ```
-.env (CRACK_DATA_ROOT)
-  → src/config.py (DATA_ROOT, POSITIVE_DIR, NEGATIVE_DIR)
-    → src/data_utils.py (load_dataset, preprocessing, feature extraction)
-      → src/models/* (training and prediction)
-        → src/evaluation/metrics.py (scoring)
+01_数据处理与特征工程.ipynb     — Shared infrastructure (data loading, preprocessing, feature extraction)
+02_传统监督学习对比.ipynb       — 7 classifiers (DT/SVM/NB/RF/LR/XGBoost/LightGBM)
+03_深度学习对比.ipynb           — CNN + loss comparison + hyperparameter grid search
+04_无监督学习对比.ipynb         — 5 clustering methods (KMeans/GMM/DBSCAN/Agglomerative/Spectral)
+05_Gradio接口规范.ipynb         — Unified Gradio interface specification
 ```
+
+### Key Design Decisions
+
+- **Notebooks are self-contained**: each notebook contains all code it needs (preprocessing, feature extraction, model definition, evaluation) — no cross-notebook imports.
+- **Gradio interfaces are reserved**: each notebook ends with Gradio callback function signatures (stubs with `raise NotImplementedError`), ready for Phase 2 visualization system development.
+- **Chinese documentation**: all markdown explanations and code comments in Chinese.
+- **PDF compliance**: each notebook's structure maps to the "机器学习理论部分" five aspects (data processing, model selection, loss measurement, parameter optimization, model validation).
+- **Pretrained models**: 16 models saved to `outputs/models/` (7 traditional + 6 CNN + 3 unsupervised) for the Gradio visualization system. Traditional models store best hyperparams from GridSearchCV; CNN models store weights from 15-epoch training with proper train/val/test split. DBSCAN excluded — no valid 2-cluster params found on this dataset.
+- **Data pipeline**: features are extracted per-image after train/test split (not before), preventing accidental global-statistics leakage. `prepare_data()` in NB05 provides a unified pipeline for fair cross-model comparison.
+- **FocalLoss**: `alpha=None` (default) skips class balancing — correct for this balanced dataset. Old implementation compressed all gradients to 25% (F1≈0.09); fixed June 2026.
+
+### Model Coverage
+
+| Category | Models | Notebook |
+|----------|--------|----------|
+| Tree | Decision Tree | 02 |
+| Kernel | SVM (linear/rbf/poly) | 02 |
+| Probabilistic | Naive Bayes (Gaussian) | 02 |
+| Bagging | Random Forest | 02 |
+| Linear | Logistic Regression | 02 |
+| Boosting | XGBoost, LightGBM | 02 |
+| Deep Learning | CrackCNN (~1.17M params) | 03 |
+| Clustering | KMeans, GMM, DBSCAN, Agglomerative, Spectral | 04 |
+
+### Loss Functions (CNN only, 03 notebook)
+
+CrossEntropy, Focal Loss (focal_gamma2: γ=2 无类别权重; focal_gamma3: γ=3 无类别权重; focal_balanced: α=0.5, γ=2), Label Smoothing CE, Dice Loss — 6 total configurations. FocalLoss `alpha=None` (default) omits class balancing, suitable for this balanced dataset (20k/20k).
+
+### Data Split Methods (01 notebook)
+
+Hold-out (70/30, 80/20, 90/10), K-Fold CV (5-fold, 10-fold), Stratified sampling.
 
 ## Code Conventions
 
@@ -72,5 +87,5 @@ The project follows a **notebook-driven workflow**: Jupyter notebooks in `notebo
 - `.env` is gitignored; each collaborator configures their own `CRACK_DATA_ROOT`.
 - Model weights (`*.pth`, `*.pkl`) and datasets are never committed.
 - When adding dependencies: install via conda or pip, then manually edit `environment.yml` — never use `conda env export` (it destroys the PyTorch CUDA `+cu118` suffix and `--extra-index-url`).
-- Code comments, docstrings, and variable names are in Chinese or mixed Chinese/English to match the team's working language.
-- Many `src/` functions are currently stubs (`raise NotImplementedError`) — this is intentional scaffolding awaiting implementation.
+- Code comments, docstrings, and variable names are in Chinese or mixed Chinese/English.
+- The `_backup/` directory contains the legacy `src/` and `tests/` code; it is a reference only and should not be modified.

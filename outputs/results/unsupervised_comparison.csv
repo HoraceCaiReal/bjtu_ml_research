@@ -1,0 +1,6 @@
+﻿method,n_clusters,n_noise,silhouette,ari,nmi,error
+K-Means,2.0,0.0,0.0395,0.1039,0.0808,
+GMM,2.0,0.0,0.0395,0.1039,0.0808,
+DBSCAN,,,,,,No valid clustering found
+Agglomerative(ward),2.0,0.0,0.0628,0.1534,0.1934,
+Spectral(rbf),2.0,0.0,-0.0407,0.0,0.002,
