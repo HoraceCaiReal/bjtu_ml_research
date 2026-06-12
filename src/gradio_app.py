@@ -448,15 +448,20 @@ def _plot_training_curves(history: dict):
     return fig
 
 
-def _plot_feature_importance(importances, feature_names):
+def _plot_feature_importance(importances, feature_names, top_n=20):
+    """绘制特征重要性图，默认只显示 Top N 个特征。"""
     if importances is None or len(importances) == 0:
         return None
-    idx = np.argsort(importances)
-    fig, ax = plt.subplots(figsize=(5.5, 4))
-    ax.barh(range(len(idx)), importances[idx], color=plt.cm.Greens(np.linspace(0.3, 0.9, len(idx))))
-    ax.set_yticks(range(len(idx)))
+    # 只取 Top N
+    n_show = min(top_n, len(importances))
+    idx = np.argsort(importances)[-n_show:]  # 取最大的 n_show 个
+    fig_height = max(3, n_show * 0.25)
+    fig, ax = plt.subplots(figsize=(5.5, fig_height))
+    ax.barh(range(n_show), importances[idx], color=plt.cm.Greens(np.linspace(0.3, 0.9, n_show)))
+    ax.set_yticks(range(n_show))
     ax.set_yticklabels([feature_names[i] for i in idx])
-    ax.set_xlabel("重要性"); ax.set_title("特征重要性")
+    ax.set_xlabel("重要性")
+    ax.set_title(f"特征重要性 (Top {n_show})")
     plt.tight_layout()
     return fig
 
@@ -628,6 +633,7 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
     t0 = time.time()
     if optimization == "pretrained":
         if model_path.exists():
+            # 安全说明: 加载本项目自身训练产出的 sklearn 模型，来源可信。
             model = joblib.load(model_path)
             # 用当前数据重新 fit（若为 Pipeline 则内部含 scaler）
             model.fit(X_tr, y_tr)
@@ -819,7 +825,21 @@ def _run_cnn(params, data, optimization, random_seed):
 
     t0 = time.time()
     if optimization == "pretrained" and cnn_path and cnn_path.exists():
-        model.load_state_dict(torch.load(cnn_path, map_location=DEVICE))
+        state_dict = torch.load(cnn_path, map_location=DEVICE, weights_only=True)
+        # 兼容旧版权重文件 (c1/c2/c3/c4/cls → block1/block2/block3/block4/classifier)
+        _LEGACY_KEY_MAP = {
+            "c1": "block1", "c2": "block2", "c3": "block3", "c4": "block4",
+            "cls": "classifier",
+        }
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            new_key = k
+            for old_prefix, new_prefix in _LEGACY_KEY_MAP.items():
+                if k.startswith(f"{old_prefix}."):
+                    new_key = f"{new_prefix}.{k[len(old_prefix)+1:]}"
+                    break
+            new_state_dict[new_key] = v
+        model.load_state_dict(new_state_dict)
         model.eval()
         status_msgs.append(f"✅ 已加载预训练模型: {cnn_path.name}")
     else:
@@ -980,12 +1000,29 @@ def _run_unsupervised(method, params, data, optimization, random_seed):
     if optimization == "pretrained":
         model_path = UNSUP_DIR / f"{method}_best.joblib"
         if model_path.exists():
+            # 安全说明: joblib 加载本项目自身训练产出的 sklearn 模型，来源可信。
+            # sklearn 模型无安全替代序列化方案（官方推荐 joblib），当前场景可接受。
             model = joblib.load(model_path)
-            if hasattr(model, "labels_"):
-                labels_pred = model.labels_
-            elif hasattr(model, "predict"):
-                labels_pred = model.predict(X_scaled)
-            status_msgs.append(f"✅ 已加载预训练模型: {model_path.name}")
+            # 优先使用 predict()（对当前数据预测），而非 labels_（原始训练集标签）
+            if hasattr(model, "predict"):
+                try:
+                    labels_pred = model.predict(X_scaled)
+                    status_msgs.append(f"✅ 已加载预训练模型: {model_path.name}")
+                except Exception as e:
+                    # 维度不匹配等异常 → 回退到 manual 模式
+                    status_msgs.append(
+                        f"⚠️ 预训练模型 {model_path.name} 不兼容当前特征 "
+                        f"({type(e).__name__})，回退到现场训练"
+                    )
+                    optimization = "manual"
+                    model = None
+            else:
+                # Agglomerative/Spectral 无 predict() 方法，必须重新训练
+                status_msgs.append(
+                    f"⚠️ {method} 不支持 predict()，使用现场训练"
+                )
+                optimization = "manual"
+                model = None
         else:
             status_msgs.append(f"⚠️ 预训练模型未找到: {method}，现场训练")
             optimization = "manual"
@@ -1017,6 +1054,21 @@ def _run_unsupervised(method, params, data, optimization, random_seed):
             raise ValueError(f"未知聚类方法: {method}")
 
         labels_pred = model.fit_predict(X_scaled)
+
+        # DBSCAN: 检测并处理全噪声情况（默认 eps 在高维空间过于严格）
+        if method == "dbscan" and len(set(labels_pred)) <= 1 and all(lbl == -1 for lbl in labels_pred):
+            from sklearn.neighbors import NearestNeighbors
+            k = int(params.get("min_samples", 5))
+            nn = NearestNeighbors(n_neighbors=k)
+            nn.fit(X_scaled)
+            distances, _ = nn.kneighbors(X_scaled)
+            k_distances = np.sort(distances[:, -1])
+            # 取 k-distance 的 75 分位数作为 eps
+            auto_eps = float(np.percentile(k_distances, 75))
+            model = DBSCAN(eps=auto_eps, min_samples=k)
+            labels_pred = model.fit_predict(X_scaled)
+            status_msgs.append(f"⚠️ 默认 eps 过小，自动调整为 eps={auto_eps:.3f}")
+
         status_msgs.append(f"✅ {method} 训练完成")
 
     elapsed = time.time() - t0
