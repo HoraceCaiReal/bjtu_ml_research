@@ -1843,28 +1843,43 @@ def create_interface():
 
                 # DT loss
                 with gr.Group(visible=False) as dt_loss:
-                    dt_criterion = gr.Dropdown(["gini", "entropy", "log_loss"], value="gini", label="criterion (分裂准则)")
+                    dt_criterion = gr.Dropdown(["gini", "entropy", "log_loss"], value="gini",
+                        label="criterion (分裂准则)",
+                        info="分裂质量度量。gini 计算快、默认首选；entropy 对不平衡数据略优；log_loss 为对数损失变体")
                 # SVM loss
                 with gr.Group(visible=False) as svm_loss:
-                    svm_kernel = gr.Dropdown(["linear", "rbf", "poly"], value="rbf", label="kernel (核函数)")
-                    svm_gamma = gr.Dropdown(["scale", "auto"], value="scale", label="gamma")
+                    svm_kernel = gr.Dropdown(["linear", "rbf", "poly"], value="rbf",
+                        label="kernel (核函数)",
+                        info="核函数。rbf 适合大多数非线性问题；linear 适合线性可分数据，训练更快且可解释")
+                    svm_gamma = gr.Dropdown(["scale", "auto"], value="scale", label="gamma",
+                        info="RBF 核的宽度参数。scale=1/(特征数×方差) 自动计算推荐默认；auto=1/特征数")
                 # NB (无显式损失)
                 with gr.Group(visible=False) as nb_loss_info:
                     gr.Markdown("*生成式模型，无显式损失函数；通过极大似然估计参数。*")
                 # RF loss（默认模型，初始可见）
                 with gr.Group(visible=True) as rf_loss:
-                    rf_criterion = gr.Dropdown(["gini", "entropy", "log_loss"], value="gini", label="criterion (分裂准则)")
+                    rf_criterion = gr.Dropdown(["gini", "entropy", "log_loss"], value="gini",
+                        label="criterion (分裂准则)",
+                        info="同决策树。gini 为默认常用选择，大多数情况下与 entropy 效果接近")
                 # LR loss
                 with gr.Group(visible=False) as lr_loss:
-                    lr_penalty = gr.Dropdown(["l1", "l2", "elasticnet"], value="l2", label="penalty (正则化)")
-                    lr_solver = gr.Dropdown(["lbfgs", "liblinear", "saga"], value="lbfgs", label="solver (优化器)")
+                    lr_penalty = gr.Dropdown(["l1", "l2", "elasticnet"], value="l2",
+                        label="penalty (正则化)",
+                        info="正则化类型。l2 最常用；l1 产生稀疏解（自动特征选择）；elasticnet 混合两者")
+                    lr_solver = gr.Dropdown(["lbfgs", "liblinear", "saga"], value="lbfgs",
+                        label="solver (优化器)",
+                        info="优化算法。lbfgs 适合大多数情况；liblinear 适合小数据集；saga 支持所有正则化类型")
                     lr_l1_ratio = gr.Slider(0.0, 1.0, 0.5, step=0.05,
                                             label="l1_ratio (elasticnet 混合比例)",
-                                            visible=False)
+                                            visible=False,
+                                            info="elasticnet 中 l1 的比例。0=纯 l2（平滑），1=纯 l1（稀疏）。仅在 penalty=elasticnet 时生效")
                 # XGBoost loss
                 with gr.Group(visible=False) as xgb_loss:
-                    xgb_objective = gr.Dropdown(["binary:logistic", "binary:hinge"], value="binary:logistic", label="objective (目标函数)")
-                    xgb_learning_rate = gr.Slider(0.01, 0.5, 0.1, step=0.01, label="learning_rate (学习率)")
+                    xgb_objective = gr.Dropdown(["binary:logistic", "binary:hinge"], value="binary:logistic",
+                        label="objective (目标函数)",
+                        info="目标函数。binary:logistic 输出概率（支持 ROC/PR）；binary:hinge 仅输出标签，概率曲线不可用")
+                    xgb_learning_rate = gr.Slider(0.01, 0.5, 0.1, step=0.01, label="learning_rate (学习率)",
+                        info="学习率/步长收缩。越小越稳健但需更多 n_estimators；常用 0.01-0.3")
                     xgb_hinge_warning = gr.Markdown(
                         "⚠️ **注意**：`binary:hinge` 仅输出硬标签 (0/1)，无法产生概率估计，"
                         "ROC-AUC 和 PR 曲线将不可用。",
@@ -1872,32 +1887,52 @@ def create_interface():
                     )
                 # LightGBM loss
                 with gr.Group(visible=False) as lgbm_loss:
-                    lgbm_objective = gr.Dropdown(["binary", "cross_entropy"], value="binary", label="objective (目标函数)")
-                    lgbm_learning_rate = gr.Slider(0.01, 0.5, 0.1, step=0.01, label="learning_rate (学习率)")
+                    lgbm_objective = gr.Dropdown(["binary", "cross_entropy"], value="binary",
+                        label="objective (目标函数)",
+                        info="目标函数。binary 和 cross_entropy 均输出概率，效果相近；binary 为常用默认")
+                    lgbm_learning_rate = gr.Slider(0.01, 0.5, 0.1, step=0.01, label="learning_rate (学习率)",
+                        info="学习率。与 n_estimators 配合：小学习率+大迭代数通常泛化更好但训练更慢")
                 # CNN loss
                 with gr.Group(visible=False) as cnn_loss:
-                    cnn_loss_fn = gr.Dropdown(["cross_entropy", "focal", "label_smoothing", "dice"], value="cross_entropy", label="损失函数")
-                    cnn_focal_alpha = gr.Dropdown(["None", "0.25", "0.5"], value="None", label="Focal α (None=无类别权重)", visible=False)
-                    cnn_focal_gamma = gr.Slider(0.0, 5.0, 2.0, step=0.5, label="Focal γ", visible=False)
-                    cnn_label_smoothing_epsilon = gr.Slider(0.0, 0.3, 0.1, step=0.05, label="Label Smoothing ε", visible=False)
-                    cnn_optimizer = gr.Dropdown(["adam", "sgd"], value="adam", label="优化器")
-                    cnn_learning_rate = gr.Number(0.001, label="学习率", precision=5)
+                    cnn_loss_fn = gr.Dropdown(["cross_entropy", "focal", "label_smoothing", "dice"],
+                        value="cross_entropy", label="损失函数",
+                        info="损失函数。cross_entropy 最通用；focal 自动关注难分样本；label_smoothing 软化标签防过拟合；dice 适合类别不平衡")
+                    cnn_focal_alpha = gr.Dropdown(["None", "0.25", "0.5"], value="None",
+                        label="Focal α (None=无类别权重)", visible=False,
+                        info="Focal Loss 类别权重。None=无权重（适合平衡数据）；0.25=衰减易分类样本权重；0.5=更强衰减")
+                    cnn_focal_gamma = gr.Slider(0.0, 5.0, 2.0, step=0.5, label="Focal γ", visible=False,
+                        info="Focal Loss 聚焦参数。γ 越大越聚焦难分样本；0=退化为普通交叉熵；2-3 为论文推荐范围")
+                    cnn_label_smoothing_epsilon = gr.Slider(0.0, 0.3, 0.1, step=0.05,
+                        label="Label Smoothing ε", visible=False,
+                        info="标签平滑强度。将硬标签 0/1 软化为 ε 和 1-ε。0.1=10% 平滑，减小过拟合风险")
+                    cnn_optimizer = gr.Dropdown(["adam", "sgd"], value="adam", label="优化器",
+                        info="优化器。adam 自适应学习率、收敛快推荐默认；sgd 需手动调学习率但泛化能力可能更好")
+                    cnn_learning_rate = gr.Number(0.001, label="学习率", precision=5,
+                        info="学习率。adam 通常用 1e-3~1e-4；sgd 通常用 1e-2~1e-3。太小收敛慢，太大不收敛")
                 # KMeans loss
                 with gr.Group(visible=False) as kmeans_loss:
-                    kmeans_algorithm = gr.Dropdown(["lloyd", "elkan"], value="lloyd", label="algorithm (优化算法)")
+                    kmeans_algorithm = gr.Dropdown(["lloyd", "elkan"], value="lloyd",
+                        label="algorithm (优化算法)",
+                        info="优化算法。lloyd 经典 EM 算法通用；elkan 用三角不等式加速，适合大数据集")
                 # GMM loss
                 with gr.Group(visible=False) as gmm_loss:
-                    gmm_covariance_type = gr.Dropdown(["full", "tied", "diag", "spherical"], value="full", label="covariance_type (协方差类型)")
+                    gmm_covariance_type = gr.Dropdown(["full", "tied", "diag", "spherical"],
+                        value="full", label="covariance_type (协方差类型)",
+                        info="协方差矩阵类型。full 最灵活但参数多、模型大；diag 对角协方差；spherical 各向同性最快")
                     gr.Markdown("⚠️ *`full` 协方差在高维特征下模型文件约 778MB，加载较慢。*")
                 # DBSCAN (无显式损失)
                 with gr.Group(visible=False) as dbscan_loss_info:
                     gr.Markdown("*基于密度的聚类，无显式损失函数；通过密度可达性定义簇。*")
                 # Agglomerative loss
                 with gr.Group(visible=False) as agg_loss:
-                    agg_linkage = gr.Dropdown(["ward", "complete", "average", "single"], value="ward", label="linkage (链接准则)")
+                    agg_linkage = gr.Dropdown(["ward", "complete", "average", "single"],
+                        value="ward", label="linkage (链接准则)",
+                        info="簇间距离定义。ward 最小化簇内方差（需欧氏距离）；complete 最大距离；average 平均距离")
                 # Spectral loss
                 with gr.Group(visible=False) as spec_loss:
-                    spec_affinity = gr.Dropdown(["rbf", "nearest_neighbors"], value="rbf", label="affinity (相似度图)")
+                    spec_affinity = gr.Dropdown(["rbf", "nearest_neighbors"], value="rbf",
+                        label="affinity (相似度图)",
+                        info="相似度图构建方式。rbf 用高斯核适合大多数情况；nearest_neighbors 用 KNN 图适合流形结构")
 
                 gr.Markdown("---")
                 gr.Markdown("### ⚡ Step 5: 参数优化 + 验证 + 指标")
