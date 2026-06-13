@@ -1749,7 +1749,8 @@ def create_interface():
                 model_choice = gr.Dropdown(
                     choices=MODEL_CHOICES,
                     value="随机森林 (Random Forest)", label="模型",
-                    filterable=False)
+                    filterable=False,
+                    info="选择分类/聚类模型。传统方法训练快、可解释；CNN 能力强但需更多资源；聚类无需标签")
 
                 # ---- Step 3 & 4: 模型参数容器 ----
                 gr.Markdown("---")
@@ -1762,47 +1763,70 @@ def create_interface():
 
                 # 决策树参数
                 with gr.Group(visible=False) as dt_params:
-                    dt_max_depth = gr.Slider(3, 50, 15, step=1, label="max_depth")
-                    dt_min_samples_split = gr.Slider(2, 20, 5, step=1, label="min_samples_split")
+                    dt_max_depth = gr.Slider(3, 50, 15, step=1, label="max_depth",
+                        info="树的最大深度。越大越复杂、越容易过拟合。3-15 适合简单问题，>20 需谨慎")
+                    dt_min_samples_split = gr.Slider(2, 20, 5, step=1, label="min_samples_split",
+                        info="内部节点再划分所需最小样本数。越大越防过拟合，2-5 为常用范围")
                 # SVM参数
                 with gr.Group(visible=False) as svm_params:
-                    svm_C = gr.Number(1.0, label="C (正则化)", precision=2)
+                    svm_C = gr.Number(1.0, label="C (正则化)", precision=2,
+                        info="正则化强度的倒数。越大拟合越强、易过拟合；越小边界越平滑。建议对数尺度调参（0.1, 1, 10）")
                 # 朴素贝叶斯参数
                 with gr.Group(visible=False) as nb_params:
-                    nb_var_smoothing = gr.Number(1e-9, label="var_smoothing", precision=10)
+                    nb_var_smoothing = gr.Number(1e-9, label="var_smoothing", precision=10,
+                        info="方差平滑项，防止零方差导致数值问题。默认 1e-9 通常无需调整")
                 # 随机森林参数（默认模型，初始可见）
                 with gr.Group(visible=True) as rf_params:
-                    rf_n_estimators = gr.Slider(50, 500, 100, step=10, label="n_estimators")
-                    rf_max_depth = gr.Slider(3, 50, 20, step=1, label="max_depth")
-                    rf_min_samples_split = gr.Slider(2, 20, 5, step=1, label="min_samples_split")
+                    rf_n_estimators = gr.Slider(50, 500, 100, step=10, label="n_estimators",
+                        info="决策树数量。越多越稳定但收益递减，100-200 通常足够，更多训练变慢")
+                    rf_max_depth = gr.Slider(3, 50, 20, step=1, label="max_depth",
+                        info="单棵树最大深度。限制深度可防过拟合；20 左右为常用上限")
+                    rf_min_samples_split = gr.Slider(2, 20, 5, step=1, label="min_samples_split",
+                        info="内部节点再划分所需最小样本数。增大可防止学习噪声模式")
                 # 逻辑回归参数
                 with gr.Group(visible=False) as lr_params:
-                    lr_C = gr.Number(1.0, label="C (正则化)", precision=2)
+                    lr_C = gr.Number(1.0, label="C (正则化)", precision=2,
+                        info="正则化强度的倒数。C 越大正则化越弱、越易过拟合。建议对数尺度调参")
                 # XGBoost参数
                 with gr.Group(visible=False) as xgb_params:
-                    xgb_n_estimators = gr.Slider(50, 300, 100, step=10, label="n_estimators")
-                    xgb_max_depth = gr.Slider(3, 12, 6, step=1, label="max_depth")
-                    xgb_subsample = gr.Slider(0.5, 1.0, 0.8, step=0.05, label="subsample")
+                    xgb_n_estimators = gr.Slider(50, 300, 100, step=10, label="n_estimators",
+                        info="提升轮数（树的数量）。过多会过拟合，配合 learning_rate 使用；小学习率需更多轮数")
+                    xgb_max_depth = gr.Slider(3, 12, 6, step=1, label="max_depth",
+                        info="树的最大深度。XGBoost 通常用 3-8，较浅的树天然防过拟合")
+                    xgb_subsample = gr.Slider(0.5, 1.0, 0.8, step=0.05, label="subsample",
+                        info="每棵树随机采样的训练数据比例。0.8 是常用值，降低可增加随机性防过拟合")
                 # LightGBM参数
                 with gr.Group(visible=False) as lgbm_params:
-                    lgbm_n_estimators = gr.Slider(50, 300, 100, step=10, label="n_estimators")
-                    lgbm_max_depth = gr.Slider(3, 12, 6, step=1, label="max_depth")
-                    lgbm_num_leaves = gr.Slider(15, 127, 31, step=4, label="num_leaves")
+                    lgbm_n_estimators = gr.Slider(50, 300, 100, step=10, label="n_estimators",
+                        info="提升迭代次数。LightGBM 收敛快，100-200 通常足够；观察验证曲线判断是否过拟合")
+                    lgbm_max_depth = gr.Slider(3, 12, 6, step=1, label="max_depth",
+                        info="树深度。LightGBM 叶子生长策略下深度通常不大，-1=不限制")
+                    lgbm_num_leaves = gr.Slider(15, 127, 31, step=4, label="num_leaves",
+                        info="每棵树的叶子数。控制模型复杂度，通常设为 31-63；越大模型越复杂")
                 # CNN参数
                 with gr.Group(visible=False) as cnn_params:
-                    cnn_dropout = gr.Slider(0.0, 0.9, 0.5, step=0.05, label="Dropout 比例")
-                    cnn_batch_size = gr.Slider(16, 256, 64, step=16, label="Batch Size")
-                    cnn_epochs = gr.Slider(5, 100, 30, step=5, label="最大 Epochs")
-                    cnn_early_stopping = gr.Slider(3, 30, 10, step=1, label="早停耐心值")
+                    cnn_dropout = gr.Slider(0.0, 0.9, 0.5, step=0.05, label="Dropout 比例",
+                        info="随机失活比例。0.3-0.5 常用，训练时随机丢弃神经元防止过拟合。0=不使用 Dropout")
+                    cnn_batch_size = gr.Slider(16, 256, 64, step=16, label="Batch Size",
+                        info="每批样本数。小批量(32-64)训练快但梯度噪声大；大批量(128-256)梯度更稳定但需更多显存")
+                    cnn_epochs = gr.Slider(5, 100, 30, step=5, label="最大 Epochs",
+                        info="最大训练轮数。配合早停使用，设置较大值让早停机制自动选择最佳轮数")
+                    cnn_early_stopping = gr.Slider(3, 30, 10, step=1, label="早停耐心值",
+                        info="验证 loss 连续不下降的轮数后自动停止。越大容忍度越高，可能等到更好模型但也可能过拟合")
                     cnn_input_size = gr.Dropdown(
-                        choices=[64, 128, 256], value=128, label="输入图像尺寸 (input_size)")
-                    cnn_weight_decay = gr.Number(1e-4, label="Weight Decay (L2正则)", precision=5)
+                        choices=[64, 128, 256], value=128, label="输入图像尺寸 (input_size)",
+                        info="输入图像缩放尺寸。越大细节保留越多但训练显著变慢。128 为速度与精度平衡")
+                    cnn_weight_decay = gr.Number(1e-4, label="Weight Decay (L2正则)", precision=5,
+                        info="L2 正则化系数。限制权重大小防止过拟合，1e-4~1e-3 为常用范围。0=不使用")
                 # 无监督参数
                 with gr.Group(visible=False) as unsup_n_clusters:
-                    unsup_n_clusters_val = gr.Slider(2, 10, 2, step=1, label="聚类数 (n_clusters)")
+                    unsup_n_clusters_val = gr.Slider(2, 10, 2, step=1, label="聚类数 (n_clusters)",
+                        info="聚类簇数。对于裂纹检测设为 2（裂纹/非裂纹）；分析其他特征模式时可增大探索")
                 with gr.Group(visible=False) as unsup_dbscan:
-                    unsup_eps = gr.Slider(0.1, 2.0, 0.5, step=0.1, label="DBSCAN eps")
-                    unsup_min_samples = gr.Slider(2, 20, 5, step=1, label="DBSCAN min_samples")
+                    unsup_eps = gr.Slider(0.1, 2.0, 0.5, step=0.1, label="DBSCAN eps",
+                        info="邻域半径。越大簇越少、噪声点越少；需根据数据密度调整，无经验时从默认值尝试")
+                    unsup_min_samples = gr.Slider(2, 20, 5, step=1, label="DBSCAN min_samples",
+                        info="核心点的最小邻域样本数。越大聚类越严格、越多点被标记为噪声")
 
                 gr.Markdown("---")
                 gr.Markdown("### 📉 Step 4: 损失函数 / 优化器")
