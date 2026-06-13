@@ -1711,6 +1711,10 @@ def create_interface():
             # ============ 左侧控制面板 ============
             with gr.Column(scale=1, min_width=380):
                 gr.Markdown("### 📊 Step 1: 数据处理")
+                gr.Markdown(
+                    "> 配置数据加载、预处理和特征提取方式。"
+                    "预处理可降噪增强裂纹边缘；特征类型越多信息越丰富，但训练越慢。"
+                )
 
                 split_method = gr.Dropdown(
                     choices=["holdout"], value="holdout", label="划分方法")
@@ -1731,6 +1735,11 @@ def create_interface():
 
                 gr.Markdown("---")
                 gr.Markdown("### 🤖 Step 2: 模型选择")
+                gr.Markdown(
+                    "> 选择分类或聚类模型。传统方法训练快、可解释性强，"
+                    "适合快速实验；CNN 学习能力更强但需要更多样本和训练时间；"
+                    "无监督聚类无需标签即可发现数据模式。"
+                )
 
                 model_choice = gr.Dropdown(
                     choices=MODEL_CHOICES,
@@ -1740,6 +1749,11 @@ def create_interface():
                 # ---- Step 3 & 4: 模型参数容器 ----
                 gr.Markdown("---")
                 gr.Markdown("### 🔧 Step 3: 模型超参数")
+                gr.Markdown(
+                    "> 调整模型结构参数。默认值通常可行；"
+                    "增大复杂度（深度/树数）可能提升拟合能力但增加过拟合风险，"
+                    "建议从小值开始逐步尝试。"
+                )
 
                 # 决策树参数
                 with gr.Group(visible=False) as dt_params:
@@ -1787,6 +1801,10 @@ def create_interface():
 
                 gr.Markdown("---")
                 gr.Markdown("### 📉 Step 4: 损失函数 / 优化器")
+                gr.Markdown(
+                    "> 配置损失函数和优化器。不同损失函数影响模型学习偏好；"
+                    "预训练模式下此部分设置不生效（使用模型训练时的内置参数）。"
+                )
 
                 pretrained_loss_hint = gr.Markdown(
                     "💡 **预训练模式**：loss/核函数/目标函数设置不生效，使用模型训练时的内置参数。"
@@ -1854,6 +1872,10 @@ def create_interface():
 
                 gr.Markdown("---")
                 gr.Markdown("### ⚡ Step 5: 参数优化 + 验证 + 指标")
+                gr.Markdown(
+                    "> 选择参数优化策略和验证方法。推荐先用 pretrained 快速评估模型效果，"
+                    "确认方向后再用 grid_search 精细调参。"
+                )
 
                 optimization_strategy = gr.Radio(
                     choices=["pretrained", "manual", "grid_search", "random_search"],
