@@ -1701,6 +1701,13 @@ def create_interface():
     """创建 Gradio Blocks 界面。"""
     theme = gr.themes.Soft(primary_hue="blue")
 
+    # ---- 音效系统：加载训练完成音效为 base64 ----
+    import base64 as _base64
+    _mp3_path = Path(__file__).resolve().parent.parent / "sound" / "训练完成音效.mp3"
+    _mp3_b64 = ""
+    if _mp3_path.exists():
+        _mp3_b64 = _base64.b64encode(_mp3_path.read_bytes()).decode()
+
     with gr.Blocks(title="裂纹图像识别系统") as app:
         gr.Markdown("""
         # 🔍 裂纹图像识别系统 — 交互式训练链路
@@ -2198,6 +2205,176 @@ def create_interface():
             inputs=all_inputs,
             outputs=all_outputs,
         )
+
+        # ---- 音效系统注入 ----
+        _sound_html = f"""<div id="sound-engine-root" style="position:fixed;top:8px;right:16px;z-index:9999;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.95);padding:4px 12px;border-radius:20px;box-shadow:0 2px 8px rgba(0,0,0,0.15);font-size:13px;font-family:sans-serif;">
+<span id="sound-toggle-label">🔊</span>
+<label style="cursor:pointer;display:flex;align-items:center;gap:4px;">
+<input type="checkbox" id="sound-toggle" checked style="accent-color:#3b82f6;">
+<span style="user-select:none;">音效</span>
+</label>
+</div>
+<audio id="complete-audio" preload="auto" style="display:none;"
+    src="data:audio/mp3;base64,{_mp3_b64 if _mp3_b64 else ''}"></audio>
+<script>
+(function() {{
+    // SoundEngine: Web Audio API 音效引擎
+    const SoundEngine = {{
+        _ctx: null,
+        _muted: false,
+        _hoverThrottle: 0,
+
+        _ensureCtx() {{
+            if (!this._ctx) {{
+                this._ctx = new (window.AudioContext || window.webkitAudioContext)();
+            }}
+            if (this._ctx.state === 'suspended') this._ctx.resume();
+            return this._ctx;
+        }},
+
+        _tone(freq, duration, type, sweepTo) {{
+            if (this._muted) return;
+            try {{
+                const ctx = this._ensureCtx();
+                const now = ctx.currentTime;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = type || 'sine';
+                osc.frequency.setValueAtTime(freq, now);
+                if (sweepTo) osc.frequency.linearRampToValueAtTime(sweepTo, now + duration);
+                gain.gain.setValueAtTime(0.12, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(now);
+                osc.stop(now + duration);
+            }} catch(e) {{ /* 静默忽略音频错误 */ }}
+        }},
+
+        playHover() {{
+            if (this._muted) return;
+            const now = Date.now();
+            if (now - this._hoverThrottle < 80) return;
+            this._hoverThrottle = now;
+            this._tone(800, 0.05, 'square');
+        }},
+
+        playClick() {{
+            this._tone(1200, 0.10, 'sine');
+        }},
+
+        playStart() {{
+            this._tone(400, 0.30, 'sine', 800);
+        }},
+
+        playComplete() {{
+            if (this._muted) return;
+            try {{
+                const audio = document.getElementById('complete-audio');
+                if (audio && audio.src && !audio.src.endsWith('base64,')) {{
+                    audio.currentTime = 0;
+                    audio.play().catch(() => {{}});
+                }}
+            }} catch(e) {{}}
+        }},
+
+        playError() {{
+            this._tone(200, 0.20, 'sine');
+            setTimeout(() => this._tone(150, 0.25, 'triangle'), 200);
+        }},
+
+        setMuted(m) {{
+            this._muted = m;
+            document.getElementById('sound-toggle-label').textContent = m ? '🔇' : '🔊';
+        }},
+
+        toggle() {{
+            this.setMuted(!this._muted);
+            try {{ localStorage.setItem('bjtu_ml_sound_muted', this._muted ? '1' : '0'); }} catch(e) {{}}
+        }}
+    }};
+
+    // 从 localStorage 恢复静音状态
+    try {{
+        if (localStorage.getItem('bjtu_ml_sound_muted') === '1') {{
+            SoundEngine.setMuted(true);
+            document.getElementById('sound-toggle').checked = false;
+        }}
+    }} catch(e) {{}}
+
+    // 静音开关事件
+    document.getElementById('sound-toggle').addEventListener('change', function() {{
+        SoundEngine.toggle();
+    }});
+
+    // 按钮 hover/click 音效：找到 Gradio 主按钮并绑定
+    function bindButtonSounds() {{
+        const btns = document.querySelectorAll('button');
+        btns.forEach(function(btn) {{
+            if (btn.textContent.includes('运行训练链路')) {{
+                btn.addEventListener('mouseenter', function() {{ SoundEngine.playHover(); }});
+                btn.addEventListener('click', function() {{ SoundEngine.playStart(); }});
+            }}
+        }});
+    }}
+
+    // 下拉框 hover 音效
+    function bindDropdownSounds() {{
+        const dropdowns = document.querySelectorAll('select');
+        dropdowns.forEach(function(dd) {{
+            dd.addEventListener('mouseenter', function() {{ SoundEngine.playHover(); }});
+            dd.addEventListener('focus', function() {{ SoundEngine.playClick(); }});
+        }});
+    }}
+
+    // 轮询绑定（Gradio 动态渲染，延迟尝试）
+    let bindAttempts = 0;
+    const bindInterval = setInterval(function() {{
+        bindButtonSounds();
+        bindDropdownSounds();
+        bindAttempts++;
+        if (bindAttempts > 20) clearInterval(bindInterval);
+    }}, 500);
+
+    // MutationObserver: 监听 status_output 区域检测训练完成/出错
+    function setupStatusObserver() {{
+        const checkAndTrigger = function() {{
+            const statusEls = document.querySelectorAll('[data-testid="markdown"]');
+            statusEls.forEach(function(el) {{
+                const html = el.innerHTML || '';
+                if (html.includes('[SOUND:COMPLETE]')) {{
+                    el.innerHTML = html.replace('[SOUND:COMPLETE]', '');
+                    SoundEngine.playComplete();
+                }}
+                if (html.includes('[SOUND:ERROR]')) {{
+                    el.innerHTML = html.replace('[SOUND:ERROR]', '');
+                    SoundEngine.playError();
+                }}
+            }});
+        }};
+
+        const observer = new MutationObserver(function() {{
+            checkAndTrigger();
+        }});
+
+        // 观察整个 body 中 markdown 内容变化
+        observer.observe(document.body, {{ childList: true, subtree: true, characterData: true }});
+
+        // 也定期检查（兜底）
+        setInterval(checkAndTrigger, 800);
+    }}
+
+    // 页面加载完成后初始化
+    if (document.readyState === 'loading') {{
+        document.addEventListener('DOMContentLoaded', function() {{
+            setupStatusObserver();
+        }});
+    }} else {{
+        setupStatusObserver();
+    }}
+}})();
+</script>"""
+        gr.HTML(_sound_html, visible=True)
 
     return app
 
