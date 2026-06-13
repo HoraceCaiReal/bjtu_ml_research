@@ -1717,21 +1717,26 @@ def create_interface():
                 )
 
                 split_method = gr.Dropdown(
-                    choices=["holdout"], value="holdout", label="划分方法")
+                    choices=["holdout"], value="holdout", label="划分方法",
+                    info="将数据随机分为训练集和测试集。目前仅支持留出法(holdout)")
                 split_ratio = gr.Slider(0.5, 0.9, 0.7, step=0.05, label="训练集比例",
-                                        visible=True)
-                use_stratify = gr.Checkbox(True, label="分层抽样")
+                                        visible=True,
+                                        info="训练集占总数据的比例。0.7=70%训练，越高模型看到数据越多但测试评估越不稳定")
+                use_stratify = gr.Checkbox(True, label="分层抽样",
+                                           info="保持训练/测试集中正负样本比例一致，避免某类样本分布偏差导致评估失准")
 
                 preprocessing = gr.Radio(
                     choices=["none", "clahe", "gaussian", "median",
                              "clahe+gaussian", "clahe+median"],
                     value="clahe+median", label="预处理方法",
-                    info="选择一种预处理管线（互斥）")
+                    info="图像预处理管线。clahe+median 增强裂纹对比度同时去噪，推荐默认；none 跳过预处理")
 
                 features = gr.CheckboxGroup(
                     choices=["hog", "lbp", "glcm", "edge_density"],
-                    value=["hog", "lbp", "glcm", "edge_density"], label="特征类型")
-                max_samples = gr.Slider(200, 4000, 2000, step=200, label="样本数上限")
+                    value=["hog", "lbp", "glcm", "edge_density"], label="特征类型",
+                    info="提取的特征类型。HOG 捕获边缘方向，LBP 描述局部纹理，GLCM 统计纹理共生矩阵，edge_density 量化边缘密度")
+                max_samples = gr.Slider(200, 4000, 2000, step=200, label="样本数上限",
+                                        info="使用的样本总数上限。越多越准确但训练越慢；2000 以上结果通常较稳定，内存不足时可降低")
 
                 gr.Markdown("---")
                 gr.Markdown("### 🤖 Step 2: 模型选择")
