@@ -77,4 +77,5 @@ videos/*.mov
 !reports/.gitkeep
 !data/.gitkeep_backup/
 _backup/
-scripts/
+scripts/*
+!scripts/e2e_test.py
