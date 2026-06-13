@@ -1579,6 +1579,8 @@ def run_pipeline(
         progress(0.95, desc="生成可视化图表...")
         total_elapsed = time.time() - t_total
         result["status"] = "\n".join(status_msgs) + f"\n\n⏱ 总耗时: {total_elapsed:.1f}s\n" + result["status"]
+        # 嵌入音效触发标记（前端 MutationObserver 检测后播放完成音效并清除标记）
+        result["status"] += "\n[SOUND:COMPLETE]"
 
         progress(1.0, desc="完成!")
         return (
@@ -1596,6 +1598,8 @@ def run_pipeline(
     except Exception as e:
         import traceback
         err_msg = f"❌ 运行出错: {str(e)}\n\n```\n{traceback.format_exc()}\n```"
+        # 嵌入音效触发标记（前端 MutationObserver 检测后播放错误音效并清除标记）
+        err_msg += "\n[SOUND:ERROR]"
         return (err_msg, "", None, None, None, None, None, None, None)
 
 
