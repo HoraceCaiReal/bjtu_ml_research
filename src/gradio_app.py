@@ -536,6 +536,21 @@ def _plot_silhouette(X_scaled, labels_pred):
         return None
 
 
+def _plot_not_available(reason: str = "当前设置下不可用") -> plt.Figure:
+    """生成 N/A 占位图，用于无法生成的图表位。"""
+    fig, ax = plt.subplots(figsize=(5.5, 5))
+    ax.text(0.5, 0.5, f"N/A\n{reason}", ha="center", va="center",
+            fontsize=16, color="gray", transform=ax.transAxes)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    plt.tight_layout()
+    return fig
+
+
 # ============================================================
 # 7. 链路执行引擎
 # ============================================================
@@ -742,15 +757,16 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
         y_prob = np.zeros_like(y_pred, dtype=float)
 
     # binary:hinge 不输出概率，ROC-AUC/PR 曲线不可用，给出用户提示
-    if (model_name == "xgboost"
-            and params.get("objective") == "binary:hinge"
-            and y_prob.max() == 0):
+    _hinge_no_prob = (model_name == "xgboost"
+                      and params.get("objective") == "binary:hinge")
+    if _hinge_no_prob:
         status_msgs.append(
             "⚠️ binary:hinge 仅输出硬标签，无法产生概率估计，"
             "ROC-AUC 和 PR 曲线不可用。如需概率输出请改用 binary:logistic。"
         )
 
     cv_text = ""
+    cv_metrics = {}  # kfold 均值±标准差，用于替换摘要指标
     if validation_method == "kfold":
         from sklearn.model_selection import cross_validate as _cv
         X_all_cv = np.vstack([X_tr, X_te])
@@ -758,6 +774,11 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
         scoring_list = ["accuracy", "f1", "precision", "recall", "roc_auc"]
         cv_res = _cv(model, X_all_cv, y_all_cv, cv=cv_folds,
                      scoring=scoring_list, n_jobs=-1)
+        # 构建 kfold 均值±标准差
+        for sc in scoring_list:
+            key = f"test_{sc}"
+            m, s = cv_res[key].mean(), cv_res[key].std()
+            cv_metrics[sc] = f"{m:.4f}±{s:.4f}"
         # 构建每折指标表格
         cv_rows = []
         for fold_i in range(cv_folds):
@@ -788,8 +809,12 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
 
     # 图表
     cm_fig = _plot_confusion_matrix(y_te, y_pred)
-    roc_fig = _plot_roc_curve(y_te, y_prob, model_name) if y_prob.max() > 0 else None
-    pr_fig = _plot_pr_curve(y_te, y_prob) if y_prob.max() > 0 else None
+    if _hinge_no_prob:
+        roc_fig = _plot_not_available("binary:hinge 无概率输出")
+        pr_fig = _plot_not_available("binary:hinge 无概率输出")
+    else:
+        roc_fig = _plot_roc_curve(y_te, y_prob, model_name) if y_prob.max() > 0 else None
+        pr_fig = _plot_pr_curve(y_te, y_prob) if y_prob.max() > 0 else None
 
     # 特征重要性（仅树模型）
     fi_fig = None
@@ -805,16 +830,24 @@ def _run_traditional(model_name, params, data, optimization, cv_folds, scoring,
         except Exception:
             pass
 
-    prob_fig = _plot_prob_distribution(y_prob, y_te) if y_prob.max() > 0 else None
+    prob_fig = _plot_prob_distribution(y_prob, y_te) if not _hinge_no_prob and y_prob.max() > 0 else (
+        _plot_not_available("binary:hinge 无概率输出") if _hinge_no_prob else None)
+
+    # 构建摘要指标表（kfold 时使用均值±标准差格式）
+    _acc = cv_metrics.get("accuracy", f"{metrics['accuracy']:.4f}")
+    _prec = cv_metrics.get("precision", f"{metrics['precision']:.4f}")
+    _rec = cv_metrics.get("recall", f"{metrics['recall']:.4f}")
+    _f1 = cv_metrics.get("f1", f"{metrics['f1']:.4f}")
+    _auc = cv_metrics.get("roc_auc", f"{metrics['roc_auc']:.4f}")
 
     metrics_md = (
         f"### 📈 评估指标 ({model_name})\n\n"
         f"| 指标 | 值 |\n|------|------|\n"
-        f"| 准确率 | {metrics['accuracy']:.4f} |\n"
-        f"| 精确率 | {metrics['precision']:.4f} |\n"
-        f"| 召回率 | {metrics['recall']:.4f} |\n"
-        f"| F1分数 | {metrics['f1']:.4f} |\n"
-        f"| ROC-AUC | {metrics['roc_auc']:.4f} |\n"
+        f"| 准确率 | {_acc} |\n"
+        f"| 精确率 | {_prec} |\n"
+        f"| 召回率 | {_rec} |\n"
+        f"| F1分数 | {_f1} |\n"
+        f"| ROC-AUC | {_auc} |\n"
         f"{cv_text}\n"
         f"\n⏱ 耗时: {elapsed:.1f}s | 最优参数: {best_params}"
     )
@@ -1310,6 +1343,15 @@ def _run_unsupervised(method, params, data, optimization, random_seed, n_iter=5,
     except Exception:
         ari = nmi = float("nan")
 
+    # 聚类质量警告：当 Sil<0.1 且 ARI<0.15 时提醒用户
+    _sil_val = float(sil) if not (isinstance(sil, float) and (sil != sil)) else -1.0
+    _ari_val = float(ari) if not (isinstance(ari, float) and (ari != ari)) else -1.0
+    if _sil_val < 0.1 and _ari_val < 0.15:
+        status_msgs.append(
+            f"⚠️ 聚类质量极低（Silhouette={_sil_val:.4f}, ARI={_ari_val:.4f}），"
+            "无监督方法可能不适合此任务。建议尝试监督学习方法。"
+        )
+
     # PCA 降维可视化
     from sklearn.decomposition import PCA
     pca = PCA(n_components=2)
@@ -1746,6 +1788,12 @@ def create_interface():
                 gr.Markdown("---")
                 gr.Markdown("### 📉 Step 4: 损失函数 / 优化器")
 
+                pretrained_loss_hint = gr.Markdown(
+                    "💡 **预训练模式**：loss/核函数/目标函数设置不生效，使用模型训练时的内置参数。"
+                    "切换为 manual/grid_search/random_search 模式可自定义。",
+                    visible=False,
+                )
+
                 # DT loss
                 with gr.Group(visible=False) as dt_loss:
                     dt_criterion = gr.Dropdown(["gini", "entropy", "log_loss"], value="gini", label="criterion (分裂准则)")
@@ -1864,13 +1912,39 @@ def create_interface():
         # --- 优化策略联动 ---
         def _on_opt_change(strategy):
             is_search = strategy in ("grid_search", "random_search")
+            is_pretrained = strategy == "pretrained"
+            # loss 参数在 pretrained 模式下禁用
+            loss_interactive = gr.update(interactive=not is_pretrained)
             return (
-                gr.update(visible=is_search),
-                gr.update(visible=is_search),
+                gr.update(visible=is_search),              # opt_search_params
+                gr.update(visible=is_search),              # scoring_metric_grp
+                gr.update(visible=is_pretrained),          # pretrained_loss_hint
+                # 传统模型 loss 参数
+                loss_interactive,  # dt_criterion
+                loss_interactive,  # svm_kernel
+                loss_interactive,  # svm_gamma
+                loss_interactive,  # rf_criterion
+                loss_interactive,  # lr_penalty
+                loss_interactive,  # lr_solver
+                loss_interactive,  # xgb_objective
+                loss_interactive,  # xgb_learning_rate
+                loss_interactive,  # lgbm_objective
+                loss_interactive,  # lgbm_learning_rate
+                # 无监督 loss 参数
+                loss_interactive,  # kmeans_algorithm
+                loss_interactive,  # gmm_covariance_type
+                loss_interactive,  # agg_linkage
+                loss_interactive,  # spec_affinity
             )
         optimization_strategy.change(
             fn=_on_opt_change, inputs=[optimization_strategy],
-            outputs=[opt_search_params, scoring_metric_grp],
+            outputs=[opt_search_params, scoring_metric_grp, pretrained_loss_hint,
+                     dt_criterion, svm_kernel, svm_gamma, rf_criterion,
+                     lr_penalty, lr_solver,
+                     xgb_objective, xgb_learning_rate,
+                     lgbm_objective, lgbm_learning_rate,
+                     kmeans_algorithm, gmm_covariance_type,
+                     agg_linkage, spec_affinity],
         )
 
         # --- CNN loss 联动 ---
