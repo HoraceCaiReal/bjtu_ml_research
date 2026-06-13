@@ -263,8 +263,7 @@ def prepare_data(
         )
         return _DATA_CACHE[_cache_key]
 
-    n_per_class = max_samples // 2
-    images, labels = load_dataset(DATA_ROOT, max_samples=n_per_class)
+    images, labels = load_dataset(DATA_ROOT, max_samples=max_samples)
 
     pipeline_map = {
         "none": lambda img: img,
@@ -835,9 +834,11 @@ def _run_traditional(
         if model_path.exists():
             # 安全说明: 加载本项目自身训练产出的 sklearn 模型，来源可信。
             model = joblib.load(model_path)
-            # 用当前数据重新 fit（若为 Pipeline 则内部含 scaler）
+            # 用当前数据重新 fit，确保特征维度一致
             model.fit(X_tr, y_tr)
-            status_msgs.append(f"✅ 已加载预训练模型: {model_path.name}")
+            status_msgs.append(
+                f"✅ 已加载预训练超参数并适配当前数据 ({model_path.name})"
+            )
         else:
             status_msgs.append(
                 f"⚠️ 预训练模型未找到: {model_path.name}，改用 GridSearchCV"
@@ -1028,6 +1029,7 @@ def _run_traditional(
         "status": "\n".join(status_msgs),
         "metrics_md": metrics_md,
         "metrics": metrics,
+        "inference_model": model,
         "cm_fig": cm_fig,
         "roc_fig": roc_fig,
         "pr_fig": pr_fig,
@@ -1209,13 +1211,15 @@ def _run_cnn(params, data, optimization, random_seed, n_iter=6, scoring_metric="
                         _loss.backward()
                         _opt.step()
                 _m.eval()
-                _preds, _tgts = [], []
+                _preds, _probs, _tgts = [], [], []
                 with torch.no_grad():
                     for _inp, _tgt in _vl:
                         _inp = _inp.to(DEVICE)
                         _out = _m(_inp)
+                        _prob = torch.softmax(_out, dim=1)[:, 1]
                         _, _p = _out.max(1)
                         _preds.extend(_p.cpu().numpy())
+                        _probs.extend(_prob.cpu().numpy())
                         _tgts.extend(_tgt.numpy())
                 if scoring_metric == "accuracy":
                     _score = accuracy_score(_tgts, _preds)
@@ -1224,7 +1228,7 @@ def _run_cnn(params, data, optimization, random_seed, n_iter=6, scoring_metric="
                 elif scoring_metric == "recall":
                     _score = recall_score(_tgts, _preds, zero_division=0)
                 elif scoring_metric == "roc_auc":
-                    _score = roc_auc_score(_tgts, _preds)
+                    _score = roc_auc_score(_tgts, _probs)
                 else:  # f1
                     _score = f1_score(_tgts, _preds, zero_division=0)
                 status_msgs.append(
@@ -1371,6 +1375,9 @@ def _run_cnn(params, data, optimization, random_seed, n_iter=6, scoring_metric="
         "status": "\n".join(status_msgs),
         "metrics_md": metrics_md,
         "metrics": metrics,
+        "inference_state_dict": {
+            key: value.detach().cpu().clone() for key, value in model.state_dict().items()
+        },
         "cm_fig": cm_fig,
         "roc_fig": roc_fig,
         "pr_fig": pr_fig,
@@ -1761,7 +1768,8 @@ def run_pipeline(
     unsup_val_method,
     # 通用
     random_seed,
-    progress=gr.Progress(track_tqdm=False),
+    progress=gr.Progress(),
+    return_inference_bundle=False,
 ):
     """Gradio 统一入口：执行完整训练链路。"""
     t_total = time.time()
@@ -1933,7 +1941,7 @@ def run_pipeline(
         result["status"] += "\n[SOUND:COMPLETE]"
 
         progress(1.0, desc="完成!")
-        return (
+        output = (
             result["status"],
             result["metrics_md"],
             result["cm_fig"],
@@ -1944,6 +1952,25 @@ def run_pipeline(
             result.get("extra_fig"),
             result.get("sil_fig"),
         )
+        if not return_inference_bundle:
+            return output
+
+        inference_bundle = None
+        if model_name in trad_models:
+            inference_bundle = {
+                "model_key": model_name,
+                "model": result["inference_model"],
+                "features": list(features),
+                "preprocessing": preprocessing_list,
+            }
+        elif model_name == "cnn":
+            inference_bundle = {
+                "model_key": model_name,
+                "state_dict": result["inference_state_dict"],
+                "preprocessing": preprocessing_list,
+                "model_params": cnn_params,
+            }
+        return (*output, inference_bundle)
 
     except Exception as e:
         import traceback
@@ -1951,7 +1978,8 @@ def run_pipeline(
         err_msg = f"❌ 运行出错: {str(e)}\n\n```\n{traceback.format_exc()}\n```"
         # 嵌入音效触发标记（前端 MutationObserver 检测后播放错误音效并清除标记）
         err_msg += "\n[SOUND:ERROR]"
-        return (err_msg, "", None, None, None, None, None, None, None)
+        output = (err_msg, "", None, None, None, None, None, None, None)
+        return (*output, None) if return_inference_bundle else output
 
 
 # ============================================================
@@ -2029,7 +2057,9 @@ def _is_supervised(key):
 
 def _model_visibility(model_key):
     """根据模型名返回各组件的 gr.update 可见性。"""
-    v = lambda cond: gr.update(visible=cond)
+    def v(condition):
+        return gr.update(visible=condition)
+
     return {
         # Step 3: 传统模型参数
         "dt_params": v(model_key == "decision_tree"),
@@ -2072,1063 +2102,761 @@ def _model_visibility(model_key):
     }
 
 
+
+
+def _bundle_matches_config(bundle: dict, model_key: str, config: dict) -> bool:
+    """检查会话中的推理模型是否对应当前已确认配置。"""
+    if not bundle or bundle.get("model_key") != model_key:
+        return False
+    if bundle.get("preprocessing") != config.get("preprocessing_list"):
+        return False
+    if model_key in TRAD_MODEL_KEYS:
+        return bundle.get("features") == config.get("features")
+    if model_key == "cnn":
+        return bundle.get("model_params") == config.get("model_params")
+    return False
+
+
+def predict_single_image(
+    image: np.ndarray,
+    model_key: str,
+    config: dict,
+    inference_bundle: dict = None,
+) -> dict:
+    """对单张上传图片进行裂纹检测。"""
+    if image is None:
+        return {"label": "等待上传", "confidence": 0.0, "probability": 0.0, "detail": "请先上传图片"}
+
+    if image.ndim == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = image.copy()
+
+    preprocessing_list = config.get("preprocessing_list", ["clahe", "median"])
+    feature_list = config.get("features", ["hog", "lbp", "glcm", "edge_density"])
+    model_params = config.get("model_params", {})
+
+    pp_map = {
+        "none": lambda img: img, "clahe": lambda img: apply_clahe(img),
+        "gaussian": lambda img: apply_gaussian_filter(img),
+        "median": lambda img: apply_median_filter(img),
+        "clahe+median": lambda img: apply_median_filter(apply_clahe(img)),
+        "clahe+gaussian": lambda img: apply_gaussian_filter(apply_clahe(img)),
+    }
+    for p in preprocessing_list:
+        if p in pp_map and p != "none":
+            gray = pp_map[p](gray)
+
+    feat_map = {
+        "hog": extract_hog_features, "lbp": extract_lbp_features,
+        "glcm": extract_glcm_features,
+        "edge_density": lambda img: np.array([extract_edge_density(img)]),
+    }
+
+    try:
+        if model_key in TRAD_MODEL_KEYS:
+            gray = cv2.resize(gray, (227, 227))
+            parts = [feat_map[f](gray) for f in feature_list if f in feat_map]
+            feats = np.concatenate(parts).reshape(1, -1)
+            using_session_model = _bundle_matches_config(
+                inference_bundle, model_key, config
+            )
+            if using_session_model:
+                model = inference_bundle["model"]
+                model_source = "当前评估模型"
+            else:
+                model_path = TRAD_DIR / f"{model_key}_best.joblib"
+                if not model_path.exists():
+                    return {
+                        "label": "错误",
+                        "confidence": 0,
+                        "probability": 0,
+                        "detail": f"预训练模型未找到: {model_path.name}",
+                    }
+                model = joblib.load(model_path)
+                expected_features = getattr(model, "n_features_in_", None)
+                if expected_features is not None and expected_features != feats.shape[1]:
+                    return {
+                        "label": "错误",
+                        "confidence": 0,
+                        "probability": 0,
+                        "detail": (
+                            f"当前选择生成 {feats.shape[1]} 维特征，预训练模型需要 "
+                            f"{expected_features} 维。请先在「模型评估」运行当前配置，"
+                            "再进行单图检测。"
+                        ),
+                    }
+                model_source = "磁盘预训练模型"
+            y_prob = model.predict_proba(feats)[0]
+            y_pred = int(np.argmax(y_prob))
+            prob = float(y_prob[1]) if len(y_prob) > 1 else float(y_prob[0])
+            label = "✅ 有裂纹" if y_pred == 1 else "❌ 无裂纹"
+            confidence = prob if y_pred == 1 else 1.0 - prob
+            return {"label": label, "confidence": round(confidence, 4),
+                    "probability": round(prob, 4),
+                    "detail": f"模型: {model_key} ({model_source}) | 预处理: {preprocessing_list} | 特征: {feature_list}"}
+
+        elif model_key == "cnn":
+            input_size = model_params.get("input_size", 128)
+            loss_fn = model_params.get("loss_fn", "cross_entropy")
+            dropout = model_params.get("dropout_rate", 0.5)
+            model = CrackCNN(dropout_rate=dropout).to(DEVICE)
+            using_session_model = _bundle_matches_config(
+                inference_bundle, model_key, config
+            )
+            if using_session_model:
+                state = inference_bundle["state_dict"]
+                model_source = "当前评估模型"
+            else:
+                cnn_path = None
+                if loss_fn == "cross_entropy":
+                    cnn_path = CNN_DIR / "crackcnn_cross_entropy_best.pth"
+                elif loss_fn == "focal":
+                    alpha = model_params.get("focal_alpha")
+                    gamma = model_params.get("focal_gamma", 2.0)
+                    if alpha is None and gamma == 2.0:
+                        cnn_path = CNN_DIR / "crackcnn_focal_gamma2_best.pth"
+                    elif alpha is None and gamma == 3.0:
+                        cnn_path = CNN_DIR / "crackcnn_focal_gamma3_best.pth"
+                    elif alpha == 0.5 and gamma == 2.0:
+                        cnn_path = CNN_DIR / "crackcnn_focal_balanced_best.pth"
+                elif loss_fn == "label_smoothing":
+                    cnn_path = CNN_DIR / "crackcnn_label_smoothing_best.pth"
+                elif loss_fn == "dice":
+                    cnn_path = CNN_DIR / "crackcnn_dice_best.pth"
+                if cnn_path is None or not cnn_path.exists():
+                    return {
+                        "label": "错误",
+                        "confidence": 0,
+                        "probability": 0,
+                        "detail": f"CNN 预训练权重未找到 (loss={loss_fn})",
+                    }
+                state = torch.load(cnn_path, map_location=DEVICE, weights_only=True)
+                model_source = "磁盘预训练模型"
+            _LEGACY_MAP = {"c1": "block1", "c2": "block2", "c3": "block3",
+                           "c4": "block4", "cls": "classifier"}
+            new_state = {}
+            for k, v in state.items():
+                nk = k
+                for old_p, new_p in _LEGACY_MAP.items():
+                    if k.startswith(f"{old_p}."):
+                        nk = f"{new_p}.{k[len(old_p) + 1:]}"
+                        break
+                new_state[nk] = v
+            model.load_state_dict(new_state)
+            model.eval()
+
+            img_resized = cv2.resize(gray, (input_size, input_size))
+            img_tensor = torch.tensor(img_resized, dtype=torch.float32).unsqueeze(0).unsqueeze(0) / 255.0
+            img_tensor = img_tensor.to(DEVICE)
+            with torch.no_grad():
+                outputs = model(img_tensor)
+                probs = torch.softmax(outputs, dim=1)[0]
+                y_pred = int(torch.argmax(probs).item())
+                prob = float(probs[1].item())
+                label = "✅ 有裂纹" if y_pred == 1 else "❌ 无裂纹"
+                confidence = prob if y_pred == 1 else 1.0 - prob
+            return {"label": label, "confidence": round(confidence, 4),
+                    "probability": round(prob, 4),
+                    "detail": f"模型: CNN ({loss_fn}, {model_source}) | input_size={input_size}"}
+
+        elif model_key in UNSUP_MODEL_KEYS:
+            return {"label": "不支持", "confidence": 0, "probability": 0,
+                    "detail": "无监督模型不支持单张图片分类，请在「模型评估」页面进行批量评估。"}
+        else:
+            return {"label": "错误", "confidence": 0, "probability": 0,
+                    "detail": f"未知模型类型: {model_key}"}
+    except Exception as e:
+        return {"label": "错误", "confidence": 0, "probability": 0,
+                "detail": f"预测失败: {str(e)}"}
+
+
+def collect_config(
+    model_choice,
+    split_method, split_ratio, use_stratify, preprocessing, features, max_samples,
+    dt_max_depth, dt_min_samples_split, dt_criterion,
+    svm_C, svm_kernel, svm_gamma, nb_var_smoothing,
+    rf_n_estimators, rf_max_depth, rf_min_samples_split, rf_criterion,
+    lr_C, lr_penalty, lr_solver, lr_l1_ratio,
+    xgb_n_estimators, xgb_max_depth, xgb_subsample, xgb_objective, xgb_learning_rate,
+    lgbm_n_estimators, lgbm_max_depth, lgbm_num_leaves, lgbm_objective, lgbm_learning_rate,
+    cnn_loss_fn, cnn_focal_alpha, cnn_focal_gamma, cnn_label_smoothing_epsilon,
+    cnn_optimizer, cnn_learning_rate, cnn_dropout, cnn_batch_size,
+    cnn_epochs, cnn_early_stopping, cnn_input_size, cnn_weight_decay,
+    unsup_n_clusters_val, unsup_eps, unsup_min_samples,
+    kmeans_algorithm, gmm_covariance_type, agg_linkage, spec_affinity,
+    optimization_strategy, cv_folds_opt, n_iter,
+    validation_method, scoring_metric, unsup_val_method, random_seed,
+) -> dict:
+    """收集 Tab 1 所有 UI 控件值，打包为配置字典。"""
+    if model_choice is None or model_choice.startswith("────"):
+        model_key = "random_forest"
+    else:
+        model_key = MODEL_KEY_MAP.get(model_choice, "random_forest")
+
+    preprocessing_list = [preprocessing] if isinstance(preprocessing, str) else list(preprocessing)
+    features_list = list(features) if features else ["hog", "lbp", "glcm", "edge_density"]
+
+    model_params = {}
+    if model_key in TRAD_MODEL_KEYS:
+        trad_params_maps = {
+            "decision_tree": {"max_depth": int(dt_max_depth), "min_samples_split": int(dt_min_samples_split),
+                              "criterion": dt_criterion},
+            "svm": {"C": float(svm_C), "kernel": svm_kernel, "gamma": svm_gamma},
+            "naive_bayes": {"var_smoothing": float(nb_var_smoothing)},
+            "random_forest": {"n_estimators": int(rf_n_estimators), "max_depth": int(rf_max_depth),
+                             "min_samples_split": int(rf_min_samples_split), "criterion": rf_criterion},
+            "logistic_regression": {"C": float(lr_C), "penalty": lr_penalty, "solver": lr_solver,
+                                   "l1_ratio": float(lr_l1_ratio)},
+            "xgboost": {"n_estimators": int(xgb_n_estimators), "max_depth": int(xgb_max_depth),
+                        "subsample": float(xgb_subsample), "objective": xgb_objective,
+                        "learning_rate": float(xgb_learning_rate)},
+            "lightgbm": {"n_estimators": int(lgbm_n_estimators), "max_depth": int(lgbm_max_depth),
+                        "num_leaves": int(lgbm_num_leaves), "objective": lgbm_objective,
+                        "learning_rate": float(lgbm_learning_rate)},
+        }
+        model_params = trad_params_maps.get(model_key, {})
+        model_params["random_state"] = int(random_seed)
+    elif model_key == "cnn":
+        model_params = {
+            "loss_fn": cnn_loss_fn,
+            "focal_alpha": cnn_focal_alpha if cnn_focal_alpha != "None" else None,
+            "focal_gamma": float(cnn_focal_gamma) if cnn_focal_gamma else 2.0,
+            "label_smoothing_epsilon": float(cnn_label_smoothing_epsilon),
+            "optimizer": cnn_optimizer,
+            "learning_rate": float(cnn_learning_rate),
+            "dropout_rate": float(cnn_dropout),
+            "batch_size": int(cnn_batch_size),
+            "epochs": int(cnn_epochs),
+            "early_stopping_patience": int(cnn_early_stopping),
+            "input_size": int(cnn_input_size) if cnn_input_size else 128,
+            "weight_decay": float(cnn_weight_decay) if cnn_weight_decay else 1e-4,
+        }
+    elif model_key in UNSUP_MODEL_KEYS:
+        model_params = {
+            "n_clusters": int(unsup_n_clusters_val) if unsup_n_clusters_val else 2,
+            "eps": float(unsup_eps) if unsup_eps else 0.5,
+            "min_samples": int(unsup_min_samples) if unsup_min_samples else 5,
+            "algorithm": kmeans_algorithm,
+            "covariance_type": gmm_covariance_type,
+            "linkage": agg_linkage,
+            "affinity": spec_affinity,
+        }
+
+    return {
+        "model_key": model_key,
+        "model_display": model_choice,
+        "preprocessing": preprocessing,
+        "preprocessing_list": preprocessing_list,
+        "features": features_list,
+        "split_method": split_method,
+        "split_ratio": float(split_ratio),
+        "use_stratify": use_stratify,
+        "max_samples": int(max_samples),
+        "random_seed": int(random_seed),
+        "model_params": model_params,
+        "optimization_strategy": optimization_strategy,
+        "cv_folds_opt": int(cv_folds_opt) if cv_folds_opt else 3,
+        "n_iter": int(n_iter) if n_iter else 30,
+        "validation_method": validation_method,
+        "scoring_metric": scoring_metric,
+        "unsup_val_method": unsup_val_method,
+    }
+
+
+def run_evaluation(config: dict, progress=gr.Progress()):
+    """用配置字典调用 run_pipeline 进行模型评估。"""
+    mk = config["model_key"]
+    mp = config["model_params"]
+    pf = config["preprocessing_list"]
+    ft = config["features"]
+    return run_pipeline(
+        split_method=config["split_method"],
+        split_ratio=config["split_ratio"],
+        use_stratify=config["use_stratify"],
+        preprocessing=pf, features=ft,
+        max_samples=config["max_samples"],
+        model_name=mk,
+        dt_max_depth=mp.get("max_depth", 15) if mk == "decision_tree" else 15,
+        dt_min_samples_split=mp.get("min_samples_split", 5) if mk == "decision_tree" else 5,
+        svm_C=mp.get("C", 1.0) if mk == "svm" else 1.0,
+        nb_var_smoothing=mp.get("var_smoothing", 1e-9) if mk == "naive_bayes" else 1e-9,
+        rf_n_estimators=mp.get("n_estimators", 100) if mk == "random_forest" else 100,
+        rf_max_depth=mp.get("max_depth", 20) if mk == "random_forest" else 20,
+        rf_min_samples_split=mp.get("min_samples_split", 5) if mk == "random_forest" else 5,
+        lr_C=mp.get("C", 1.0) if mk == "logistic_regression" else 1.0,
+        xgb_n_estimators=mp.get("n_estimators", 100) if mk == "xgboost" else 100,
+        xgb_max_depth=mp.get("max_depth", 6) if mk == "xgboost" else 6,
+        xgb_subsample=mp.get("subsample", 0.8) if mk == "xgboost" else 0.8,
+        lgbm_n_estimators=mp.get("n_estimators", 100) if mk == "lightgbm" else 100,
+        lgbm_max_depth=mp.get("max_depth", 6) if mk == "lightgbm" else 6,
+        lgbm_num_leaves=mp.get("num_leaves", 31) if mk == "lightgbm" else 31,
+        cnn_dropout=mp.get("dropout_rate", 0.5) if mk == "cnn" else 0.5,
+        cnn_batch_size=mp.get("batch_size", 64) if mk == "cnn" else 64,
+        cnn_epochs=mp.get("epochs", 30) if mk == "cnn" else 30,
+        cnn_early_stopping=mp.get("early_stopping_patience", 10) if mk == "cnn" else 10,
+        cnn_input_size=mp.get("input_size", 128) if mk == "cnn" else 128,
+        cnn_weight_decay=mp.get("weight_decay", 1e-4) if mk == "cnn" else 1e-4,
+        unsup_n_clusters=mp.get("n_clusters", 2) if mk in UNSUP_MODEL_KEYS else 2,
+        unsup_eps=mp.get("eps", 0.5) if mk == "dbscan" else 0.5,
+        unsup_min_samples=mp.get("min_samples", 5) if mk == "dbscan" else 5,
+        dt_criterion=mp.get("criterion", "gini") if mk == "decision_tree" else "gini",
+        svm_kernel=mp.get("kernel", "rbf") if mk == "svm" else "rbf",
+        svm_gamma=mp.get("gamma", "scale") if mk == "svm" else "scale",
+        rf_criterion=mp.get("criterion", "gini") if mk == "random_forest" else "gini",
+        lr_penalty=mp.get("penalty", "l2") if mk == "logistic_regression" else "l2",
+        lr_solver=mp.get("solver", "lbfgs") if mk == "logistic_regression" else "lbfgs",
+        lr_l1_ratio=mp.get("l1_ratio", 0.5) if mk == "logistic_regression" else 0.5,
+        xgb_objective=mp.get("objective", "binary:logistic") if mk == "xgboost" else "binary:logistic",
+        xgb_learning_rate=mp.get("learning_rate", 0.1) if mk == "xgboost" else 0.1,
+        lgbm_objective=mp.get("objective", "binary") if mk == "lightgbm" else "binary",
+        lgbm_learning_rate=mp.get("learning_rate", 0.1) if mk == "lightgbm" else 0.1,
+        cnn_loss_fn=mp.get("loss_fn", "cross_entropy") if mk == "cnn" else "cross_entropy",
+        cnn_focal_alpha=mp.get("focal_alpha", "None") if mk == "cnn" else "None",
+        cnn_focal_gamma=mp.get("focal_gamma", 2.0) if mk == "cnn" else 2.0,
+        cnn_label_smoothing_epsilon=mp.get("label_smoothing_epsilon", 0.1) if mk == "cnn" else 0.1,
+        cnn_optimizer=mp.get("optimizer", "adam") if mk == "cnn" else "adam",
+        cnn_learning_rate=mp.get("learning_rate", 0.001) if mk == "cnn" else 0.001,
+        kmeans_algorithm=mp.get("algorithm", "lloyd") if mk == "kmeans" else "lloyd",
+        gmm_covariance_type=mp.get("covariance_type", "full") if mk == "gmm" else "full",
+        agg_linkage=mp.get("linkage", "ward") if mk == "agglomerative" else "ward",
+        spec_affinity=mp.get("affinity", "rbf") if mk == "spectral" else "rbf",
+        optimization_strategy=config["optimization_strategy"],
+        cv_folds_opt=config["cv_folds_opt"],
+        n_iter=config["n_iter"],
+        validation_method=config["validation_method"],
+        scoring_metric=config["scoring_metric"],
+        unsup_val_method=config["unsup_val_method"],
+        random_seed=config["random_seed"],
+        progress=progress,
+        return_inference_bundle=True,
+    )
+
+
 def create_interface():
-    """创建 Gradio Blocks 界面。"""
-    theme = gr.themes.Soft(primary_hue="blue")
-
-    # ---- 音效系统：加载训练完成音效为 base64 ----
-    import base64 as _base64
-
-    _mp3_path = Path(__file__).resolve().parent.parent / "sound" / "训练完成音效.mp3"
-    _mp3_b64 = ""
-    if _mp3_path.exists():
-        _mp3_b64 = _base64.b64encode(_mp3_path.read_bytes()).decode()
-
     with gr.Blocks(title="裂纹图像识别系统") as app:
-        gr.Markdown("""
-        # 🔍 裂纹图像识别系统 — 交互式训练链路
-        ### 北京交通大学《机器学习与Python编程》研究性专题
-        """)
+        gr.HTML('<h1>🔍 裂纹图像识别系统</h1><h3>北京交通大学《机器学习与Python编程》研究性专题</h3>')
 
-        with gr.Row():
-            # ============ 左侧控制面板 ============
-            with gr.Column(scale=1, min_width=380):
-                gr.Markdown("### 📊 Step 1: 数据处理")
-                gr.Markdown(
-                    "> 配置数据加载、预处理和特征提取方式。"
-                    "预处理可降噪增强裂纹边缘；特征类型越多信息越丰富，但训练越慢。"
-                )
+        config_state = gr.State({})
+        inference_state = gr.State(None)
 
+        # ================================================================
+        # Tab 1: 模型配置
+        # ================================================================
+        with gr.Tab("⚙️ 模型配置"):
+            gr.Markdown("### 📊 数据管线")
+            gr.Markdown("> 配置数据加载、预处理和特征提取方式。预处理可降噪增强裂纹边缘；特征类型越多信息越丰富，但训练越慢。")
+            with gr.Row():
                 split_method = gr.Dropdown(
-                    choices=["holdout"],
-                    value="holdout",
-                    label="划分方法",
-                    info="将数据随机分为训练集和测试集。目前仅支持留出法(holdout)",
-                )
-                split_ratio = gr.Slider(
-                    0.5,
-                    0.9,
-                    0.7,
-                    step=0.05,
-                    label="训练集比例",
-                    visible=True,
-                    info="训练集占总数据的比例。0.7=70%训练，越高模型看到数据越多但测试评估越不稳定",
-                )
-                use_stratify = gr.Checkbox(
-                    True,
-                    label="分层抽样",
-                    info="保持训练/测试集中正负样本比例一致，避免某类样本分布偏差导致评估失准",
-                )
-
+                    choices=["holdout"], value="holdout", label="划分方法", scale=1,
+                    info="将数据随机分为训练集和测试集。目前仅支持留出法(holdout)")
+                split_ratio = gr.Slider(0.5, 0.9, 0.7, step=0.05, label="训练集比例", scale=1,
+                    info="训练集占总数据的比例。0.7=70%训练，越高模型看到数据越多但测试评估越不稳定")
+                use_stratify = gr.Checkbox(True, label="分层抽样", scale=1,
+                    info="保持训练/测试集中正负样本比例一致，避免某类样本分布偏差导致评估失准")
+            with gr.Row():
                 preprocessing = gr.Radio(
-                    choices=[
-                        "none",
-                        "clahe",
-                        "gaussian",
-                        "median",
-                        "clahe+gaussian",
-                        "clahe+median",
-                    ],
-                    value="clahe+median",
-                    label="预处理方法",
-                    info="图像预处理管线。clahe+median 增强裂纹对比度同时去噪，推荐默认；none 跳过预处理",
-                )
-
+                    choices=["none","clahe","gaussian","median","clahe+gaussian","clahe+median"],
+                    value="clahe+median", label="预处理方法",
+                    info="图像预处理管线。clahe+median 增强裂纹对比度同时去噪，推荐默认；none 跳过预处理")
+            with gr.Row():
                 features = gr.CheckboxGroup(
-                    choices=["hog", "lbp", "glcm", "edge_density"],
-                    value=["hog", "lbp", "glcm", "edge_density"],
-                    label="特征类型",
-                    info="提取的特征类型。HOG 捕获边缘方向，LBP 描述局部纹理，GLCM 统计纹理共生矩阵，edge_density 量化边缘密度",
-                )
-                max_samples = gr.Slider(
-                    200,
-                    4000,
-                    2000,
-                    step=200,
-                    label="样本数上限",
-                    info="使用的样本总数上限。越多越准确但训练越慢；2000 以上结果通常较稳定，内存不足时可降低",
-                )
+                    choices=["hog","lbp","glcm","edge_density"],
+                    value=["hog","lbp","glcm","edge_density"], label="特征类型",
+                    info="提取的特征类型。HOG 捕获边缘方向，LBP 描述局部纹理，GLCM 统计纹理共生矩阵，edge_density 量化边缘密度")
+                max_samples = gr.Slider(200, 4000, 2000, step=200, label="样本数上限",
+                    info="使用的样本总数上限。越多越准确但训练越慢；2000 以上结果通常较稳定，内存不足时可降低")
 
-                gr.Markdown("---")
-                gr.Markdown("### 🤖 Step 2: 模型选择")
-                gr.Markdown(
-                    "> 选择分类或聚类模型。传统方法训练快、可解释性强，"
-                    "适合快速实验；CNN 学习能力更强但需要更多样本和训练时间；"
-                    "无监督聚类无需标签即可发现数据模式。"
-                )
+            gr.Markdown("---")
+            gr.Markdown("### 🤖 模型选择")
+            gr.Markdown("> 选择分类或聚类模型。传统方法训练快、可解释性强，适合快速实验；CNN 学习能力更强但需要更多样本和训练时间；无监督聚类无需标签即可发现数据模式。")
+            model_choice = gr.Dropdown(
+                choices=MODEL_CHOICES, value="随机森林 (Random Forest)", label="模型", filterable=False,
+                info="选择分类/聚类模型。传统方法训练快、可解释；CNN 能力强但需更多资源；聚类无需标签")
 
-                model_choice = gr.Dropdown(
-                    choices=MODEL_CHOICES,
-                    value="随机森林 (Random Forest)",
-                    label="模型",
-                    filterable=False,
-                    info="选择分类/聚类模型。传统方法训练快、可解释；CNN 能力强但需更多资源；聚类无需标签",
-                )
+            gr.Markdown("---")
+            gr.Markdown("### 🔧 超参数")
+            gr.Markdown("> 调整模型结构参数。默认值通常可行；增大复杂度（深度/树数）可能提升拟合能力但增加过拟合风险，建议从小值开始逐步尝试。")
+            with gr.Group(visible=False) as dt_params:
+                with gr.Row():
+                    dt_max_depth = gr.Slider(3, 50, 15, step=1, label="max_depth",
+                        info="树的最大深度。越大拟合能力越强但容易过拟合；None 表示不限制")
+                    dt_min_samples_split = gr.Slider(2, 20, 5, step=1, label="min_samples_split",
+                        info="内部节点再划分所需最小样本数。越大越防过拟合")
+            with gr.Group(visible=False) as svm_params:
+                svm_C = gr.Number(1.0, label="C (正则化)", precision=2,
+                    info="正则化强度的倒数。越小正则化越强；值越大拟合能力越强但可能过拟合")
+            with gr.Group(visible=False) as nb_params:
+                nb_var_smoothing = gr.Number(1e-9, label="var_smoothing", precision=10,
+                    info="方差平滑项。防止零方差导致数值问题；越大分布越平滑")
+            with gr.Group(visible=True) as rf_params:
+                with gr.Row():
+                    rf_n_estimators = gr.Slider(50, 500, 100, step=10, label="n_estimators",
+                        info="决策树数量。越多效果越稳定，但训练时间线性增长")
+                    rf_max_depth = gr.Slider(3, 50, 20, step=1, label="max_depth",
+                        info="每棵树的最大深度。限制树的复杂度防止过拟合")
+                    rf_min_samples_split = gr.Slider(2, 20, 5, step=1, label="min_samples_split",
+                        info="内部节点再划分所需最小样本数")
+            with gr.Group(visible=False) as lr_params:
+                lr_C = gr.Number(1.0, label="C (正则化)", precision=2,
+                    info="正则化强度的倒数。越小正则化越强")
+            with gr.Group(visible=False) as xgb_params:
+                with gr.Row():
+                    xgb_n_estimators = gr.Slider(50, 300, 100, step=10, label="n_estimators",
+                        info="提升轮数。越多越精细但可能过拟合")
+                    xgb_max_depth = gr.Slider(3, 12, 6, step=1, label="max_depth",
+                        info="每棵树的最大深度。XGBoost 通常用较浅的树")
+                    xgb_subsample = gr.Slider(0.5, 1.0, 0.8, step=0.05, label="subsample",
+                        info="每棵树使用的样本比例。<1 可防过拟合")
+            with gr.Group(visible=False) as lgbm_params:
+                with gr.Row():
+                    lgbm_n_estimators = gr.Slider(50, 300, 100, step=10, label="n_estimators",
+                        info="提升轮数。LightGBM 收敛快，通常 100-200 足够")
+                    lgbm_max_depth = gr.Slider(3, 12, 6, step=1, label="max_depth",
+                        info="每棵树的最大深度。LightGBM 叶子优先增长，-1 表示不限制")
+                    lgbm_num_leaves = gr.Slider(15, 127, 31, step=4, label="num_leaves",
+                        info="每棵树的叶子数。LightGBM 关键参数，越大模型越复杂")
+            with gr.Group(visible=False) as cnn_params:
+                with gr.Row():
+                    cnn_dropout = gr.Slider(0.0, 0.9, 0.5, step=0.05, label="Dropout",
+                        info="随机丢弃神经元的比例。防止 CNN 过拟合，0.5 为常用值")
+                    cnn_batch_size = gr.Slider(16, 256, 64, step=16, label="Batch Size",
+                        info="每批训练的样本数。越大梯度估计越稳定但显存消耗越大")
+                with gr.Row():
+                    cnn_epochs = gr.Slider(5, 100, 30, step=5, label="最大 Epochs",
+                        info="最大训练轮数。早停机制会在验证 loss 不再下降时自动停止")
+                    cnn_early_stopping = gr.Slider(3, 30, 10, step=1, label="早停耐心值",
+                        info="验证 loss 连续不降的容忍轮数。超过此轮数未改善则停止训练")
+                with gr.Row():
+                    cnn_input_size = gr.Dropdown([64,128,256], value=128, label="输入图像尺寸",
+                        info="CNN 输入分辨率。越大信息越丰富但训练越慢，128 是速度与精度的平衡点")
+                    cnn_weight_decay = gr.Number(1e-4, label="Weight Decay", precision=5,
+                        info="L2 正则化系数。防止权重过大，典型范围 1e-5 ~ 1e-3")
+            with gr.Group(visible=False) as unsup_n_clusters:
+                unsup_n_clusters_val = gr.Slider(2, 10, 2, step=1, label="聚类数 (n_clusters)",
+                    info="需要的聚类数。本任务通常设为 2（有裂纹/无裂纹）")
+            with gr.Group(visible=False) as unsup_dbscan:
+                with gr.Row():
+                    unsup_eps = gr.Slider(0.1, 2.0, 0.5, step=0.1, label="eps",
+                        info="邻域半径。越大同一簇包含的点越多；过大会把所有点归为一簇")
+                    unsup_min_samples = gr.Slider(2, 20, 5, step=1, label="min_samples",
+                        info="核心点的最小邻域样本数。越大对噪声越敏感")
 
-                # ---- Step 3 & 4: 模型参数容器 ----
-                gr.Markdown("---")
-                gr.Markdown("### 🔧 Step 3: 模型超参数")
-                gr.Markdown(
-                    "> 调整模型结构参数。默认值通常可行；"
-                    "增大复杂度（深度/树数）可能提升拟合能力但增加过拟合风险，"
-                    "建议从小值开始逐步尝试。"
-                )
+            gr.Markdown("---")
+            gr.Markdown("### 📉 损失函数 / 优化器")
+            gr.Markdown("> 选择训练目标函数与优化算法。不同损失函数影响模型学习方向；pretrained 模式会使用预训练参数适配当前数据。")
+            pretrained_loss_hint = gr.Markdown("> 💡 *当前为 pretrained 模式，下方参数仅用于说明；评估时使用预训练参数并适配当前数据。*")
+            with gr.Group(visible=False) as dt_loss:
+                dt_criterion = gr.Dropdown(["gini","entropy","log_loss"], value="gini", label="criterion",
+                    info="分裂准则。gini 计算快，entropy 对不平衡数据更敏感")
+            with gr.Group(visible=False) as svm_loss:
+                with gr.Row():
+                    svm_kernel = gr.Dropdown(["linear","rbf","poly"], value="rbf", label="kernel",
+                        info="核函数类型。linear 线性核速度快，rbf 非线性能力强，poly 多项式核")
+                    svm_gamma = gr.Dropdown(["scale","auto"], value="scale", label="gamma",
+                        info="核函数系数。scale=1/(n_features*var)，auto=1/n_features")
+            with gr.Group(visible=False) as nb_loss_info:
+                gr.Markdown("*生成式模型，无显式损失函数；通过极大似然估计参数。*")
+            with gr.Group(visible=True) as rf_loss:
+                rf_criterion = gr.Dropdown(["gini","entropy","log_loss"], value="gini", label="criterion",
+                    info="分裂准则。gini 计算快，entropy 对不平衡数据更敏感")
+            with gr.Group(visible=False) as lr_loss:
+                with gr.Row():
+                    lr_penalty = gr.Dropdown(["l1","l2","elasticnet"], value="l2", label="penalty",
+                        info="正则化类型。l2 防权重过大，l1 产生稀疏解，elasticnet 融合两者")
+                    lr_solver = gr.Dropdown(["lbfgs","liblinear","saga"], value="lbfgs", label="solver",
+                        info="优化算法。lbfgs 适合中小数据集，saga 支持所有正则化")
+                lr_l1_ratio = gr.Slider(0.0, 1.0, 0.5, step=0.05, label="l1_ratio", visible=False,
+                    info="L1 正则化在 elasticnet 中的混合比例。0=纯L2，1=纯L1")
+            with gr.Group(visible=False) as xgb_loss:
+                with gr.Row():
+                    xgb_objective = gr.Dropdown(["binary:logistic","binary:hinge"],
+                        value="binary:logistic", label="objective",
+                        info="目标函数。binary:logistic 输出概率，binary:hinge 仅输出硬标签")
+                    xgb_learning_rate = gr.Slider(0.01, 0.5, 0.1, step=0.01, label="learning_rate",
+                        info="学习率/收缩率。越小需要更多轮次但泛化更好")
+                xgb_hinge_warning = gr.Markdown(
+                    "⚠️ **注意**：`binary:hinge` 仅输出硬标签 (0/1)，无法产生概率估计，ROC-AUC 和 PR 曲线将不可用。", visible=False)
+            with gr.Group(visible=False) as lgbm_loss:
+                with gr.Row():
+                    lgbm_objective = gr.Dropdown(["binary","cross_entropy"], value="binary", label="objective",
+                        info="目标函数。binary 标准二分类，cross_entropy 交叉熵")
+                    lgbm_learning_rate = gr.Slider(0.01, 0.5, 0.1, step=0.01, label="learning_rate",
+                        info="学习率/收缩率。越小需要更多轮次但泛化更好")
+            with gr.Group(visible=False) as cnn_loss:
+                cnn_loss_fn = gr.Dropdown(["cross_entropy","focal","label_smoothing","dice"],
+                    value="cross_entropy", label="损失函数",
+                    info="训练用的损失函数。交叉熵是二分类标准选择；FocalLoss 关注难分样本；LabelSmoothing 防过拟合")
+                with gr.Row():
+                    cnn_focal_alpha = gr.Dropdown(["None","0.25","0.5"], value="None",
+                        label="Focal α", visible=False,
+                        info="FocalLoss 正类权重。None 表示无类别平衡（适合均衡数据集），0.25 为正类权重")
+                    cnn_focal_gamma = gr.Slider(0.0, 5.0, 2.0, step=0.5, label="Focal γ", visible=False,
+                        info="聚焦参数。越大越关注难分样本，默认 2.0")
+                    cnn_label_smoothing_epsilon = gr.Slider(0.0, 0.3, 0.1, step=0.05,
+                        label="Label Smoothing ε", visible=False,
+                        info="标签平滑系数。0.1 表示将标签从 [0,1] 平滑为 [0.05,0.95]，防止过拟合")
+                with gr.Row():
+                    cnn_optimizer = gr.Dropdown(["adam","sgd"], value="adam", label="优化器",
+                        info="参数优化算法。adam 自适应学习率，收敛快；sgd 手动调学习率，泛化可能更好")
+                    cnn_learning_rate = gr.Number(0.001, label="学习率", precision=5,
+                        info="模型权重更新步长。过大容易震荡不收敛，过小收敛太慢")
+            with gr.Group(visible=False) as kmeans_loss:
+                kmeans_algorithm = gr.Dropdown(["lloyd","elkan"], value="lloyd", label="algorithm",
+                    info="K-Means 优化算法。lloyd 通用选择，elkan 利用三角不等式加速")
+            with gr.Group(visible=False) as gmm_loss:
+                gmm_covariance_type = gr.Dropdown(["full","tied","diag","spherical"], value="full",
+                    label="covariance_type", info="协方差矩阵类型。full 最灵活但参数多，spherical 最简单但限制强")
+                gr.Markdown("⚠️ *`full` 协方差在高维特征下模型文件约 778MB，加载较慢。*")
+            with gr.Group(visible=False) as dbscan_loss_info:
+                gr.Markdown("*基于密度的聚类，无显式损失函数；通过密度可达性定义簇。*")
+            with gr.Group(visible=False) as agg_loss:
+                agg_linkage = gr.Dropdown(["ward","complete","average","single"], value="ward", label="linkage",
+                    info="链接准则。ward 最小化簇内方差，complete 最远距离，average 平均距离，single 最近距离")
+            with gr.Group(visible=False) as spec_loss:
+                spec_affinity = gr.Dropdown(["rbf","nearest_neighbors"], value="rbf", label="affinity",
+                    info="相似度图构造方式。rbf 径向基函数，nearest_neighbors 近邻图")
 
-                # 决策树参数
-                with gr.Group(visible=False) as dt_params:
-                    dt_max_depth = gr.Slider(
-                        3,
-                        50,
-                        15,
-                        step=1,
-                        label="max_depth",
-                        info="树的最大深度。越大越复杂、越容易过拟合。3-15 适合简单问题，>20 需谨慎",
-                    )
-                    dt_min_samples_split = gr.Slider(
-                        2,
-                        20,
-                        5,
-                        step=1,
-                        label="min_samples_split",
-                        info="内部节点再划分所需最小样本数。越大越防过拟合，2-5 为常用范围",
-                    )
-                # SVM参数
-                with gr.Group(visible=False) as svm_params:
-                    svm_C = gr.Number(
-                        1.0,
-                        label="C (正则化)",
-                        precision=2,
-                        info="正则化强度的倒数。越大拟合越强、易过拟合；越小边界越平滑。建议对数尺度调参（0.1, 1, 10）",
-                    )
-                # 朴素贝叶斯参数
-                with gr.Group(visible=False) as nb_params:
-                    nb_var_smoothing = gr.Number(
-                        1e-9,
-                        label="var_smoothing",
-                        precision=10,
-                        info="方差平滑项，防止零方差导致数值问题。默认 1e-9 通常无需调整",
-                    )
-                # 随机森林参数（默认模型，初始可见）
-                with gr.Group(visible=True) as rf_params:
-                    rf_n_estimators = gr.Slider(
-                        50,
-                        500,
-                        100,
-                        step=10,
-                        label="n_estimators",
-                        info="决策树数量。越多越稳定但收益递减，100-200 通常足够，更多训练变慢",
-                    )
-                    rf_max_depth = gr.Slider(
-                        3,
-                        50,
-                        20,
-                        step=1,
-                        label="max_depth",
-                        info="单棵树最大深度。限制深度可防过拟合；20 左右为常用上限",
-                    )
-                    rf_min_samples_split = gr.Slider(
-                        2,
-                        20,
-                        5,
-                        step=1,
-                        label="min_samples_split",
-                        info="内部节点再划分所需最小样本数。增大可防止学习噪声模式",
-                    )
-                # 逻辑回归参数
-                with gr.Group(visible=False) as lr_params:
-                    lr_C = gr.Number(
-                        1.0,
-                        label="C (正则化)",
-                        precision=2,
-                        info="正则化强度的倒数。C 越大正则化越弱、越易过拟合。建议对数尺度调参",
-                    )
-                # XGBoost参数
-                with gr.Group(visible=False) as xgb_params:
-                    xgb_n_estimators = gr.Slider(
-                        50,
-                        300,
-                        100,
-                        step=10,
-                        label="n_estimators",
-                        info="提升轮数（树的数量）。过多会过拟合，配合 learning_rate 使用；小学习率需更多轮数",
-                    )
-                    xgb_max_depth = gr.Slider(
-                        3,
-                        12,
-                        6,
-                        step=1,
-                        label="max_depth",
-                        info="树的最大深度。XGBoost 通常用 3-8，较浅的树天然防过拟合",
-                    )
-                    xgb_subsample = gr.Slider(
-                        0.5,
-                        1.0,
-                        0.8,
-                        step=0.05,
-                        label="subsample",
-                        info="每棵树随机采样的训练数据比例。0.8 是常用值，降低可增加随机性防过拟合",
-                    )
-                # LightGBM参数
-                with gr.Group(visible=False) as lgbm_params:
-                    lgbm_n_estimators = gr.Slider(
-                        50,
-                        300,
-                        100,
-                        step=10,
-                        label="n_estimators",
-                        info="提升迭代次数。LightGBM 收敛快，100-200 通常足够；观察验证曲线判断是否过拟合",
-                    )
-                    lgbm_max_depth = gr.Slider(
-                        3,
-                        12,
-                        6,
-                        step=1,
-                        label="max_depth",
-                        info="树深度。LightGBM 叶子生长策略下深度通常不大，-1=不限制",
-                    )
-                    lgbm_num_leaves = gr.Slider(
-                        15,
-                        127,
-                        31,
-                        step=4,
-                        label="num_leaves",
-                        info="每棵树的叶子数。控制模型复杂度，通常设为 31-63；越大模型越复杂",
-                    )
-                # CNN参数
-                with gr.Group(visible=False) as cnn_params:
-                    cnn_dropout = gr.Slider(
-                        0.0,
-                        0.9,
-                        0.5,
-                        step=0.05,
-                        label="Dropout 比例",
-                        info="随机失活比例。0.3-0.5 常用，训练时随机丢弃神经元防止过拟合。0=不使用 Dropout",
-                    )
-                    cnn_batch_size = gr.Slider(
-                        16,
-                        256,
-                        64,
-                        step=16,
-                        label="Batch Size",
-                        info="每批样本数。小批量(32-64)训练快但梯度噪声大；大批量(128-256)梯度更稳定但需更多显存",
-                    )
-                    cnn_epochs = gr.Slider(
-                        5,
-                        100,
-                        30,
-                        step=5,
-                        label="最大 Epochs",
-                        info="最大训练轮数。配合早停使用，设置较大值让早停机制自动选择最佳轮数",
-                    )
-                    cnn_early_stopping = gr.Slider(
-                        3,
-                        30,
-                        10,
-                        step=1,
-                        label="早停耐心值",
-                        info="验证 loss 连续不下降的轮数后自动停止。越大容忍度越高，可能等到更好模型但也可能过拟合",
-                    )
-                    cnn_input_size = gr.Dropdown(
-                        choices=[64, 128, 256],
-                        value=128,
-                        label="输入图像尺寸 (input_size)",
-                        info="输入图像缩放尺寸。越大细节保留越多但训练显著变慢。128 为速度与精度平衡",
-                    )
-                    cnn_weight_decay = gr.Number(
-                        1e-4,
-                        label="Weight Decay (L2正则)",
-                        precision=5,
-                        info="L2 正则化系数。限制权重大小防止过拟合，1e-4~1e-3 为常用范围。0=不使用",
-                    )
-                # 无监督参数
-                with gr.Group(visible=False) as unsup_n_clusters:
-                    unsup_n_clusters_val = gr.Slider(
-                        2,
-                        10,
-                        2,
-                        step=1,
-                        label="聚类数 (n_clusters)",
-                        info="聚类簇数。对于裂纹检测设为 2（裂纹/非裂纹）；分析其他特征模式时可增大探索",
-                    )
-                with gr.Group(visible=False) as unsup_dbscan:
-                    unsup_eps = gr.Slider(
-                        0.1,
-                        2.0,
-                        0.5,
-                        step=0.1,
-                        label="DBSCAN eps",
-                        info="邻域半径。越大簇越少、噪声点越少；需根据数据密度调整，无经验时从默认值尝试",
-                    )
-                    unsup_min_samples = gr.Slider(
-                        2,
-                        20,
-                        5,
-                        step=1,
-                        label="DBSCAN min_samples",
-                        info="核心点的最小邻域样本数。越大聚类越严格、越多点被标记为噪声",
-                    )
-
-                gr.Markdown("---")
-                gr.Markdown("### 📉 Step 4: 损失函数 / 优化器")
-                gr.Markdown(
-                    "> 配置损失函数和优化器。不同损失函数影响模型学习偏好；"
-                    "预训练模式下此部分设置不生效（使用模型训练时的内置参数）。"
-                )
-
-                pretrained_loss_hint = gr.Markdown(
-                    "💡 **预训练模式**：loss/核函数/目标函数设置不生效，使用模型训练时的内置参数。"
-                    "切换为 manual/grid_search/random_search 模式可自定义。",
-                    visible=False,
-                )
-
-                # DT loss
-                with gr.Group(visible=False) as dt_loss:
-                    dt_criterion = gr.Dropdown(
-                        ["gini", "entropy", "log_loss"],
-                        value="gini",
-                        label="criterion (分裂准则)",
-                        info="分裂质量度量。gini 计算快、默认首选；entropy 对不平衡数据略优；log_loss 为对数损失变体",
-                    )
-                # SVM loss
-                with gr.Group(visible=False) as svm_loss:
-                    svm_kernel = gr.Dropdown(
-                        ["linear", "rbf", "poly"],
-                        value="rbf",
-                        label="kernel (核函数)",
-                        info="核函数。rbf 适合大多数非线性问题；linear 适合线性可分数据，训练更快且可解释",
-                    )
-                    svm_gamma = gr.Dropdown(
-                        ["scale", "auto"],
-                        value="scale",
-                        label="gamma",
-                        info="RBF 核的宽度参数。scale=1/(特征数×方差) 自动计算推荐默认；auto=1/特征数",
-                    )
-                # NB (无显式损失)
-                with gr.Group(visible=False) as nb_loss_info:
-                    gr.Markdown("*生成式模型，无显式损失函数；通过极大似然估计参数。*")
-                # RF loss（默认模型，初始可见）
-                with gr.Group(visible=True) as rf_loss:
-                    rf_criterion = gr.Dropdown(
-                        ["gini", "entropy", "log_loss"],
-                        value="gini",
-                        label="criterion (分裂准则)",
-                        info="同决策树。gini 为默认常用选择，大多数情况下与 entropy 效果接近",
-                    )
-                # LR loss
-                with gr.Group(visible=False) as lr_loss:
-                    lr_penalty = gr.Dropdown(
-                        ["l1", "l2", "elasticnet"],
-                        value="l2",
-                        label="penalty (正则化)",
-                        info="正则化类型。l2 最常用；l1 产生稀疏解（自动特征选择）；elasticnet 混合两者",
-                    )
-                    lr_solver = gr.Dropdown(
-                        ["lbfgs", "liblinear", "saga"],
-                        value="lbfgs",
-                        label="solver (优化器)",
-                        info="优化算法。lbfgs 适合大多数情况；liblinear 适合小数据集；saga 支持所有正则化类型",
-                    )
-                    lr_l1_ratio = gr.Slider(
-                        0.0,
-                        1.0,
-                        0.5,
-                        step=0.05,
-                        label="l1_ratio (elasticnet 混合比例)",
-                        visible=False,
-                        info="elasticnet 中 l1 的比例。0=纯 l2（平滑），1=纯 l1（稀疏）。仅在 penalty=elasticnet 时生效",
-                    )
-                # XGBoost loss
-                with gr.Group(visible=False) as xgb_loss:
-                    xgb_objective = gr.Dropdown(
-                        ["binary:logistic", "binary:hinge"],
-                        value="binary:logistic",
-                        label="objective (目标函数)",
-                        info="目标函数。binary:logistic 输出概率（支持 ROC/PR）；binary:hinge 仅输出标签，概率曲线不可用",
-                    )
-                    xgb_learning_rate = gr.Slider(
-                        0.01,
-                        0.5,
-                        0.1,
-                        step=0.01,
-                        label="learning_rate (学习率)",
-                        info="学习率/步长收缩。越小越稳健但需更多 n_estimators；常用 0.01-0.3",
-                    )
-                    xgb_hinge_warning = gr.Markdown(
-                        "⚠️ **注意**：`binary:hinge` 仅输出硬标签 (0/1)，无法产生概率估计，"
-                        "ROC-AUC 和 PR 曲线将不可用。",
-                        visible=False,
-                    )
-                # LightGBM loss
-                with gr.Group(visible=False) as lgbm_loss:
-                    lgbm_objective = gr.Dropdown(
-                        ["binary", "cross_entropy"],
-                        value="binary",
-                        label="objective (目标函数)",
-                        info="目标函数。binary 和 cross_entropy 均输出概率，效果相近；binary 为常用默认",
-                    )
-                    lgbm_learning_rate = gr.Slider(
-                        0.01,
-                        0.5,
-                        0.1,
-                        step=0.01,
-                        label="learning_rate (学习率)",
-                        info="学习率。与 n_estimators 配合：小学习率+大迭代数通常泛化更好但训练更慢",
-                    )
-                # CNN loss
-                with gr.Group(visible=False) as cnn_loss:
-                    cnn_loss_fn = gr.Dropdown(
-                        ["cross_entropy", "focal", "label_smoothing", "dice"],
-                        value="cross_entropy",
-                        label="损失函数",
-                        info="损失函数。cross_entropy 最通用；focal 自动关注难分样本；label_smoothing 软化标签防过拟合；dice 适合类别不平衡",
-                    )
-                    cnn_focal_alpha = gr.Dropdown(
-                        ["None", "0.25", "0.5"],
-                        value="None",
-                        label="Focal α (None=无类别权重)",
-                        visible=False,
-                        info="Focal Loss 类别权重。None=无权重（适合平衡数据）；0.25=衰减易分类样本权重；0.5=更强衰减",
-                    )
-                    cnn_focal_gamma = gr.Slider(
-                        0.0,
-                        5.0,
-                        2.0,
-                        step=0.5,
-                        label="Focal γ",
-                        visible=False,
-                        info="Focal Loss 聚焦参数。γ 越大越聚焦难分样本；0=退化为普通交叉熵；2-3 为论文推荐范围",
-                    )
-                    cnn_label_smoothing_epsilon = gr.Slider(
-                        0.0,
-                        0.3,
-                        0.1,
-                        step=0.05,
-                        label="Label Smoothing ε",
-                        visible=False,
-                        info="标签平滑强度。将硬标签 0/1 软化为 ε 和 1-ε。0.1=10% 平滑，减小过拟合风险",
-                    )
-                    cnn_optimizer = gr.Dropdown(
-                        ["adam", "sgd"],
-                        value="adam",
-                        label="优化器",
-                        info="优化器。adam 自适应学习率、收敛快推荐默认；sgd 需手动调学习率但泛化能力可能更好",
-                    )
-                    cnn_learning_rate = gr.Number(
-                        0.001,
-                        label="学习率",
-                        precision=5,
-                        info="学习率。adam 通常用 1e-3~1e-4；sgd 通常用 1e-2~1e-3。太小收敛慢，太大不收敛",
-                    )
-                # KMeans loss
-                with gr.Group(visible=False) as kmeans_loss:
-                    kmeans_algorithm = gr.Dropdown(
-                        ["lloyd", "elkan"],
-                        value="lloyd",
-                        label="algorithm (优化算法)",
-                        info="优化算法。lloyd 经典 EM 算法通用；elkan 用三角不等式加速，适合大数据集",
-                    )
-                # GMM loss
-                with gr.Group(visible=False) as gmm_loss:
-                    gmm_covariance_type = gr.Dropdown(
-                        ["full", "tied", "diag", "spherical"],
-                        value="full",
-                        label="covariance_type (协方差类型)",
-                        info="协方差矩阵类型。full 最灵活但参数多、模型大；diag 对角协方差；spherical 各向同性最快",
-                    )
-                    gr.Markdown(
-                        "⚠️ *`full` 协方差在高维特征下模型文件约 778MB，加载较慢。*"
-                    )
-                # DBSCAN (无显式损失)
-                with gr.Group(visible=False) as dbscan_loss_info:
-                    gr.Markdown(
-                        "*基于密度的聚类，无显式损失函数；通过密度可达性定义簇。*"
-                    )
-                # Agglomerative loss
-                with gr.Group(visible=False) as agg_loss:
-                    agg_linkage = gr.Dropdown(
-                        ["ward", "complete", "average", "single"],
-                        value="ward",
-                        label="linkage (链接准则)",
-                        info="簇间距离定义。ward 最小化簇内方差（需欧氏距离）；complete 最大距离；average 平均距离",
-                    )
-                # Spectral loss
-                with gr.Group(visible=False) as spec_loss:
-                    spec_affinity = gr.Dropdown(
-                        ["rbf", "nearest_neighbors"],
-                        value="rbf",
-                        label="affinity (相似度图)",
-                        info="相似度图构建方式。rbf 用高斯核适合大多数情况；nearest_neighbors 用 KNN 图适合流形结构",
-                    )
-
-                gr.Markdown("---")
-                gr.Markdown("### ⚡ Step 5: 参数优化 + 验证 + 指标")
-                gr.Markdown(
-                    "> 选择参数优化策略和验证方法。推荐先用 pretrained 快速评估模型效果，"
-                    "确认方向后再用 grid_search 精细调参。"
-                )
-
+            gr.Markdown("---")
+            gr.Markdown("### ⚡ 优化策略与验证")
+            with gr.Row():
                 optimization_strategy = gr.Radio(
-                    choices=["pretrained", "manual", "grid_search", "random_search"],
-                    value="pretrained",
-                    label="参数优化策略",
-                    info="pretrained=加载预训练模型（最快）；manual=用当前手动参数训练；grid_search=穷举搜索最优组合；random_search=随机采样搜索",
-                )
+                    choices=["pretrained","manual","grid_search","random_search"],
+                    value="pretrained", label="参数优化策略", scale=1,
+                    info="搜索策略。pretrained=使用预训练参数适配当前数据 | manual=手动参数 | grid_search=GridSearchCV 全搜索 | random_search=RandomizedSearchCV 随机采样")
                 with gr.Group(visible=False) as opt_search_params:
-                    cv_folds_opt = gr.Slider(
-                        2,
-                        10,
-                        3,
-                        step=1,
-                        label="CV 折数",
-                        info="交叉验证折数。折数越多评估越稳定但搜索耗时成倍增长；3-5 折为常用平衡范围",
-                    )
-                    n_iter = gr.Slider(
-                        10,
-                        100,
-                        30,
-                        step=10,
-                        label="随机搜索迭代次数 (仅RandomSearch)",
-                        info="随机搜索的采样次数。越多越可能找到好参数组合；通常 30-50 次已足够覆盖主要参数空间",
-                    )
-
+                    with gr.Row():
+                        cv_folds_opt = gr.Slider(2, 10, 3, step=1, label="CV 折数",
+                            info="交叉验证折数。越大评估越准确但训练越慢，3-5 常用")
+                        n_iter = gr.Slider(10, 100, 30, step=10, label="随机搜索迭代次数",
+                            info="RandomizedSearchCV 采样组合数。越大覆盖越广但耗时越长")
+            with gr.Row():
                 with gr.Group(visible=True) as supervised_val:
-                    validation_method = gr.Radio(
-                        choices=["holdout", "kfold"],
-                        value="holdout",
-                        label="验证方法",
-                        info="holdout=单次划分验证（快、有方差）；kfold=K折交叉验证（更稳定可靠但慢K倍）",
-                    )
+                    validation_method = gr.Radio(choices=["holdout","kfold"], value="holdout", label="验证方法",
+                        info="holdout 留出法快速验证；kfold 交叉验证更可靠但慢")
                 with gr.Group(visible=False) as unsup_val:
                     unsup_val_method = gr.Radio(
-                        choices=["internal_external", "internal_only", "external_only"],
-                        value="internal_external",
-                        label="评估指标范围",
-                        info="internal=轮廓系数等内部指标；external=对比真实标签的外部指标；internal_external=两者都显示",
-                    )
-
+                        choices=["internal_external","internal_only","external_only"],
+                        value="internal_external", label="评估指标范围",
+                        info="internal 内部指标(轮廓系数等)不需标签；external 外部指标(ARI/NMI)需真实标签对比")
                 with gr.Group(visible=False) as scoring_metric_grp:
                     scoring_metric = gr.Dropdown(
-                        choices=["f1", "accuracy", "roc_auc", "precision", "recall"],
-                        value="f1",
-                        label="优化目标指标 (GridSearch/RandomSearch时使用)",
-                        info="参数搜索的优化目标。f1 平衡精确率和召回率；accuracy 适合平衡数据；roc_auc 评估排序质量",
-                    )
-
+                        choices=["f1","accuracy","roc_auc","precision","recall"], value="f1", label="优化目标指标",
+                        info="网格/随机搜索使用的评分指标。f1 兼顾精确率与召回率，建议默认")
                 with gr.Group(visible=False) as unsup_opt_info:
-                    gr.Markdown(
-                        "*💡 聚类方法的 GridSearch/RandomSearch 使用 **轮廓系数 (Silhouette)** 作为搜索目标（非监督指标）。*"
-                    )
+                    gr.Markdown("*💡 聚类方法的 GridSearch/RandomSearch 使用轮廓系数作为搜索目标。*")
+            random_seed = gr.Number(42, label="随机种子", precision=0,
+                info="随机种子保证结果可复现。保持默认 42 即可")
 
-                random_seed = gr.Number(
-                    42,
-                    label="随机种子",
-                    precision=0,
-                    info="随机种子。固定可复现结果；改变可测试模型对数据划分的稳定性",
-                )
+            confirm_btn = gr.Button("✅ 确认配置", variant="primary", size="lg")
+            config_summary = gr.Markdown("#### 📋 当前配置\n\n*等待确认...*")
 
-                run_btn = gr.Button("▶ 运行训练链路", variant="primary", size="lg")
+        # ================================================================
+        # Tab 2: 模型评估
+        # ================================================================
+        with gr.Tab("📊 模型评估"):
+            gr.Markdown("### 使用「模型配置」页面的配置，在测试集上评估模型")
+            gr.Markdown("> 先在「模型配置」页面确认配置，再点运行。")
+            run_btn = gr.Button("🚀 运行评估", variant="primary", size="lg")
 
-            # ============ 右侧结果区 ============
-            with gr.Column(scale=2):
-                status_output = gr.Markdown("### 训练状态\n\n*等待运行...*")
-                metrics_output = gr.Markdown("")
+            status_output = gr.Markdown("")
+            metrics_output = gr.Markdown("")
+            with gr.Row():
+                cm_plot = gr.Plot(label="混淆矩阵")
+                roc_plot = gr.Plot(label="ROC 曲线")
+            with gr.Row():
+                pr_plot = gr.Plot(label="PR 曲线")
+                fi_plot = gr.Plot(label="特征重要性 / PCA聚类")
+            with gr.Row():
+                prob_plot = gr.Plot(label="预测概率分布")
+                extra_plot = gr.Plot(label="训练曲线 / 特征重要性")
+            with gr.Row():
+                extra_plot2 = gr.Plot(label="Silhouette / PCA 聚类")
 
-                with gr.Row():
-                    cm_plot = gr.Plot(label="混淆矩阵")
-                    roc_plot = gr.Plot(label="ROC 曲线")
+        # ================================================================
+        # Tab 3: 单图检测
+        # ================================================================
+        with gr.Tab("🔎 单图检测"):
+            gr.Markdown("### 使用「模型配置」页面的配置，对单张图片进行裂纹检测")
+            gr.Markdown("> 先在「模型配置」确认配置，再上传图片。无监督模型不支持单图检测。")
+            with gr.Row():
+                with gr.Column(scale=1):
+                    detect_image = gr.Image(label="上传待检测图片", type="numpy",
+                                            image_mode="RGB", height=320)
+                    detect_btn = gr.Button("🔍 开始检测", variant="primary", size="lg")
+                with gr.Column(scale=1):
+                    detect_result = gr.Label(label="检测结果")
+                    detect_detail = gr.Markdown("*等待检测...*")
 
-                with gr.Row():
-                    pr_plot = gr.Plot(label="PR 曲线")
-                    fi_plot = gr.Plot(label="特征重要性 / 训练曲线 / PCA聚类")
-
-                with gr.Row():
-                    prob_plot = gr.Plot(label="预测概率分布")
-                    extra_plot = gr.Plot(label="训练曲线 / 特征重要性")
-
-                with gr.Row():
-                    extra_plot2 = gr.Plot(label="Silhouette / PCA 聚类")
-
-        # ============================================================
+        # ================================================================
         # 事件绑定
-        # ============================================================
+        # ================================================================
 
-        # --- 优化策略联动 ---
-        def _on_opt_change(strategy):
-            is_search = strategy in ("grid_search", "random_search")
-            is_pretrained = strategy == "pretrained"
-            # loss 参数在 pretrained 模式下禁用
-            loss_interactive = gr.update(interactive=not is_pretrained)
-            return (
-                gr.update(visible=is_search),  # opt_search_params
-                gr.update(visible=is_search),  # scoring_metric_grp
-                gr.update(visible=is_pretrained),  # pretrained_loss_hint
-                # 传统模型 loss 参数
-                loss_interactive,  # dt_criterion
-                loss_interactive,  # svm_kernel
-                loss_interactive,  # svm_gamma
-                loss_interactive,  # rf_criterion
-                loss_interactive,  # lr_penalty
-                loss_interactive,  # lr_solver
-                loss_interactive,  # xgb_objective
-                loss_interactive,  # xgb_learning_rate
-                loss_interactive,  # lgbm_objective
-                loss_interactive,  # lgbm_learning_rate
-                # 无监督 loss 参数
-                loss_interactive,  # kmeans_algorithm
-                loss_interactive,  # gmm_covariance_type
-                loss_interactive,  # agg_linkage
-                loss_interactive,  # spec_affinity
-            )
-
+        # 优化策略联动
+        def _on_opt_change(s):
+            v = s in ("grid_search", "random_search")
+            return gr.update(visible=v), gr.update(visible=v)
         optimization_strategy.change(
-            fn=_on_opt_change,
-            inputs=[optimization_strategy],
-            outputs=[
-                opt_search_params,
-                scoring_metric_grp,
-                pretrained_loss_hint,
-                dt_criterion,
-                svm_kernel,
-                svm_gamma,
-                rf_criterion,
-                lr_penalty,
-                lr_solver,
-                xgb_objective,
-                xgb_learning_rate,
-                lgbm_objective,
-                lgbm_learning_rate,
-                kmeans_algorithm,
-                gmm_covariance_type,
-                agg_linkage,
-                spec_affinity,
-            ],
-        )
+            fn=_on_opt_change, inputs=[optimization_strategy],
+            outputs=[opt_search_params, scoring_metric_grp])
 
-        # --- CNN loss 联动 ---
-        def _on_cnn_loss_change(loss):
-            return (
-                gr.update(visible=(loss == "focal")),
-                gr.update(visible=(loss == "focal")),
-                gr.update(visible=(loss == "label_smoothing")),
-            )
-
+        # CNN loss 联动
         cnn_loss_fn.change(
-            fn=_on_cnn_loss_change,
-            inputs=[cnn_loss_fn],
-            outputs=[cnn_focal_alpha, cnn_focal_gamma, cnn_label_smoothing_epsilon],
-        )
+            fn=lambda loss_name: (
+                gr.update(visible=(loss_name == "focal")),
+                gr.update(visible=(loss_name == "focal")),
+                gr.update(visible=(loss_name == "label_smoothing")),
+            ),
+            inputs=[cnn_loss_fn], outputs=[cnn_focal_alpha, cnn_focal_gamma, cnn_label_smoothing_epsilon])
 
-        # --- LR penalty 联动：elasticnet 时显示 l1_ratio，并过滤 solver ---
-        def _on_lr_penalty_change(penalty):
-            if penalty == "l2":
-                solver_choices = ["lbfgs", "liblinear", "saga"]
-                solver_value = "lbfgs"
-            elif penalty == "l1":
-                solver_choices = ["liblinear", "saga"]
-                solver_value = "liblinear"
-            else:  # elasticnet
-                solver_choices = ["saga"]
-                solver_value = "saga"
+        # LR penalty 联动
+        def _on_lr_penalty(p):
+            if p == "l2":
+                return (
+                    gr.update(visible=False),
+                    gr.update(
+                        choices=["lbfgs", "liblinear", "saga"], value="lbfgs"
+                    ),
+                )
+            if p == "l1":
+                return (
+                    gr.update(visible=False),
+                    gr.update(choices=["liblinear", "saga"], value="liblinear"),
+                )
             return (
-                gr.update(visible=(penalty == "elasticnet")),
-                gr.update(choices=solver_choices, value=solver_value),
+                gr.update(visible=True),
+                gr.update(choices=["saga"], value="saga"),
             )
 
-        lr_penalty.change(
-            fn=_on_lr_penalty_change,
-            inputs=[lr_penalty],
-            outputs=[lr_l1_ratio, lr_solver],
-        )
+        lr_penalty.change(fn=_on_lr_penalty, inputs=[lr_penalty], outputs=[lr_l1_ratio, lr_solver])
 
-        # --- XGBoost objective 联动：binary:hinge 时显示警告并移除 roc_auc ---
-        def _on_xgb_objective_change(objective):
-            is_hinge = objective == "binary:hinge"
-            if is_hinge:
-                scoring_choices = ["f1", "accuracy", "precision", "recall"]
-                scoring_value = "f1"
-            else:
-                scoring_choices = ["f1", "accuracy", "roc_auc", "precision", "recall"]
-                scoring_value = None  # 保持当前值，不强制切换
-            return (
-                gr.update(visible=is_hinge),
-                gr.update(choices=scoring_choices, value=scoring_value),
-            )
-
+        # XGBoost objective 联动
         xgb_objective.change(
-            fn=_on_xgb_objective_change,
-            inputs=[xgb_objective],
-            outputs=[xgb_hinge_warning, scoring_metric],
-        )
+            fn=lambda o: (gr.update(visible=(o=="binary:hinge")),
+                          gr.update(choices=["f1","accuracy","precision","recall"], value="f1")
+                          if o=="binary:hinge"
+                          else gr.update(choices=["f1","accuracy","roc_auc","precision","recall"])),
+            inputs=[xgb_objective], outputs=[xgb_hinge_warning, scoring_metric])
 
-        # --- SVM kernel 联动：linear 时隐藏 gamma ---
-        def _on_svm_kernel_change(kernel):
-            return gr.update(visible=(kernel != "linear"))
+        # SVM kernel 联动
+        svm_kernel.change(fn=lambda k: gr.update(visible=(k!="linear")), inputs=[svm_kernel], outputs=[svm_gamma])
 
-        svm_kernel.change(
-            fn=_on_svm_kernel_change,
-            inputs=[svm_kernel],
-            outputs=[svm_gamma],
-        )
+        # pretrained 模式提示
+        def _on_strategy_change_for_hint(s):
+            return gr.update(visible=(s=="pretrained"))
+        optimization_strategy.change(
+            fn=_on_strategy_change_for_hint, inputs=[optimization_strategy],
+            outputs=[pretrained_loss_hint])
 
-        # --- 模型切换联动 (最复杂的部分) ---
-        def on_model_change(choice):
-            if choice is None or choice.startswith("────"):
-                key = "decision_tree"
-            else:
-                key = MODEL_KEY_MAP.get(choice, "decision_tree")
-            vis = _model_visibility(key)
-
-            # 构建输出列表 (按组件的定义顺序)
-            return [
-                # dt, svm, nb, rf, lr, xgb, lgbm params
-                vis["dt_params"],
-                vis["svm_params"],
-                vis["nb_params"],
-                vis["rf_params"],
-                vis["lr_params"],
-                vis["xgb_params"],
-                vis["lgbm_params"],
-                # cnn params
-                vis["cnn_params"],
-                # unsup params
-                vis["unsup_n_clusters"],
-                vis["unsup_dbscan"],
-                # dt, svm, nb, rf, lr, xgb, lgbm loss
-                vis["dt_loss"],
-                vis["svm_loss"],
-                vis["nb_loss_info"],
-                vis["rf_loss"],
-                vis["lr_loss"],
-                vis["xgb_loss"],
-                vis["lgbm_loss"],
-                # cnn loss
-                vis["cnn_loss"],
-                # kmeans, gmm, dbscan, agg, spec loss
-                vis["kmeans_loss"],
-                vis["gmm_loss"],
-                vis["dbscan_loss_info"],
-                vis["agg_loss"],
-                vis["spec_loss"],
-                # validation
-                vis["supervised_val"],
-                vis["unsup_val"],
-                vis["scoring_metric"],
-                vis["unsup_opt_info"],
-            ]
-
-        # 收集所有需要联动控制的组件
+        # 模型切换联动
         model_linked_outputs = [
-            dt_params,
-            svm_params,
-            nb_params,
-            rf_params,
-            lr_params,
-            xgb_params,
-            lgbm_params,
-            cnn_params,
-            unsup_n_clusters,
-            unsup_dbscan,
-            dt_loss,
-            svm_loss,
-            nb_loss_info,
-            rf_loss,
-            lr_loss,
-            xgb_loss,
-            lgbm_loss,
-            cnn_loss,
-            kmeans_loss,
-            gmm_loss,
-            dbscan_loss_info,
-            agg_loss,
-            spec_loss,
-            supervised_val,
-            unsup_val,
-            scoring_metric_grp,
-            unsup_opt_info,
+            dt_params, svm_params, nb_params, rf_params, lr_params, xgb_params, lgbm_params,
+            cnn_params, unsup_n_clusters, unsup_dbscan,
+            dt_loss, svm_loss, nb_loss_info, rf_loss, lr_loss, xgb_loss, lgbm_loss,
+            cnn_loss, kmeans_loss, gmm_loss, dbscan_loss_info, agg_loss, spec_loss,
+            supervised_val, unsup_val, scoring_metric_grp, unsup_opt_info,
         ]
-
         model_choice.change(
-            fn=on_model_change,
-            inputs=[model_choice],
-            outputs=model_linked_outputs,
-        )
+            fn=lambda c: list(_model_visibility(
+                MODEL_KEY_MAP.get(c, "decision_tree") if c and not c.startswith("────")
+                else "decision_tree").values()),
+            inputs=[model_choice], outputs=model_linked_outputs)
 
-        # --- 运行按钮 ---
-        all_inputs = [
-            split_method,
-            split_ratio,
-            use_stratify,
-            preprocessing,
-            features,
-            max_samples,
+        # 所有配置输入（供 collect_config 使用）
+        all_config_inputs = [
             model_choice,
-            dt_max_depth,
-            dt_min_samples_split,
-            svm_C,
-            nb_var_smoothing,
-            rf_n_estimators,
-            rf_max_depth,
-            rf_min_samples_split,
-            lr_C,
-            xgb_n_estimators,
-            xgb_max_depth,
-            xgb_subsample,
-            lgbm_n_estimators,
-            lgbm_max_depth,
-            lgbm_num_leaves,
-            cnn_dropout,
-            cnn_batch_size,
-            cnn_epochs,
-            cnn_early_stopping,
-            cnn_input_size,
-            cnn_weight_decay,
-            unsup_n_clusters_val,
-            unsup_eps,
-            unsup_min_samples,
-            dt_criterion,
-            svm_kernel,
-            svm_gamma,
-            rf_criterion,
-            lr_penalty,
-            lr_solver,
-            lr_l1_ratio,
-            xgb_objective,
-            xgb_learning_rate,
-            lgbm_objective,
-            lgbm_learning_rate,
-            cnn_loss_fn,
-            cnn_focal_alpha,
-            cnn_focal_gamma,
-            cnn_label_smoothing_epsilon,
-            cnn_optimizer,
-            cnn_learning_rate,
-            kmeans_algorithm,
-            gmm_covariance_type,
-            agg_linkage,
-            spec_affinity,
-            optimization_strategy,
-            cv_folds_opt,
-            n_iter,
-            validation_method,
-            scoring_metric,
-            unsup_val_method,
-            random_seed,
+            split_method, split_ratio, use_stratify, preprocessing, features, max_samples,
+            dt_max_depth, dt_min_samples_split, dt_criterion,
+            svm_C, svm_kernel, svm_gamma, nb_var_smoothing,
+            rf_n_estimators, rf_max_depth, rf_min_samples_split, rf_criterion,
+            lr_C, lr_penalty, lr_solver, lr_l1_ratio,
+            xgb_n_estimators, xgb_max_depth, xgb_subsample, xgb_objective, xgb_learning_rate,
+            lgbm_n_estimators, lgbm_max_depth, lgbm_num_leaves, lgbm_objective, lgbm_learning_rate,
+            cnn_loss_fn, cnn_focal_alpha, cnn_focal_gamma, cnn_label_smoothing_epsilon,
+            cnn_optimizer, cnn_learning_rate, cnn_dropout, cnn_batch_size,
+            cnn_epochs, cnn_early_stopping, cnn_input_size, cnn_weight_decay,
+            unsup_n_clusters_val, unsup_eps, unsup_min_samples,
+            kmeans_algorithm, gmm_covariance_type, agg_linkage, spec_affinity,
+            optimization_strategy, cv_folds_opt, n_iter,
+            validation_method, scoring_metric, unsup_val_method, random_seed,
         ]
 
-        all_outputs = [
-            status_output,
-            metrics_output,
-            cm_plot,
-            roc_plot,
-            pr_plot,
-            fi_plot,
-            prob_plot,
-            extra_plot,
-            extra_plot2,
+        # 确认配置
+        def _confirm_and_summarize(*args):
+            config = collect_config(*args)
+            mk, md = config["model_key"], config["model_display"]
+            s = (f"#### 📋 当前配置\n\n| 项目 | 值 |\n|------|------|\n"
+                 f"| 模型 | {md} |\n| 预处理 | {config['preprocessing']} |\n"
+                 f"| 特征 | {', '.join(config['features'])} |\n"
+                 f"| 样本数 | {config['max_samples']} |\n"
+                 f"| 策略 | {config['optimization_strategy']} |\n"
+                 f"| 验证 | {config['validation_method']} |\n")
+            if mk in UNSUP_MODEL_KEYS:
+                s += f"| 聚类数 | {config['model_params'].get('n_clusters', 2)} |\n"
+            elif mk == "cnn":
+                s += (f"| 损失函数 | {config['model_params'].get('loss_fn', 'cross_entropy')} |\n"
+                      f"| 学习率 | {config['model_params'].get('learning_rate', 0.001)} |\n")
+            s += "\n✅ 配置已确认，可在「模型评估」或「单图检测」页面使用。"
+            return config, s
+
+        confirm_btn.click(
+            fn=_confirm_and_summarize, inputs=all_config_inputs,
+            outputs=[config_state, config_summary])
+
+        # 运行评估
+        all_run_outputs = [
+            status_output, metrics_output,
+            cm_plot, roc_plot, pr_plot, fi_plot, prob_plot, extra_plot, extra_plot2,
+            inference_state,
         ]
 
-        # 包装 run_pipeline 以将模型显示名转为内部key
-        def _run_wrapper(*args):
-            # args[7] 是 model_choice
-            args_list = list(args)
-            choice = args_list[6]
-            if choice and not choice.startswith("────"):
-                args_list[6] = MODEL_KEY_MAP.get(choice, "random_forest")
-            else:
-                args_list[6] = "random_forest"
-            return run_pipeline(*args_list)
+        def _run_eval(config, progress=gr.Progress()):
+            if not config:
+                return (
+                    "❌ 请先在「模型配置」页面确认配置！",
+                    "",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            return run_evaluation(config, progress=progress)
 
-        run_btn.click(
-            fn=_run_wrapper,
-            inputs=all_inputs,
-            outputs=all_outputs,
-        )
+        run_btn.click(fn=_run_eval, inputs=[config_state], outputs=all_run_outputs)
 
-        # ---- 音效系统注入 ----
-        _sound_html = f"""<div id="sound-engine-root" style="position:fixed;top:8px;right:16px;z-index:9999;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.95);padding:4px 12px;border-radius:20px;box-shadow:0 2px 8px rgba(0,0,0,0.15);font-size:13px;font-family:sans-serif;">
-<span id="sound-toggle-label">🔊</span>
-<label style="cursor:pointer;display:flex;align-items:center;gap:4px;">
-<input type="checkbox" id="sound-toggle" checked style="accent-color:#3b82f6;">
-<span style="user-select:none;">音效</span>
-</label>
-</div>
-<audio id="complete-audio" preload="auto" style="display:none;"
-    src="data:audio/mp3;base64,{_mp3_b64 if _mp3_b64 else ""}"></audio>
-<script>
-(function() {{
-    // SoundEngine: Web Audio API 音效引擎
-    const SoundEngine = {{
-        _ctx: null,
-        _muted: false,
-        _hoverThrottle: 0,
+        # 单图检测
+        def _detect(img, config, inference_bundle):
+            if not config:
+                return ({"请先配置": 0.0}, "❌ 请先在「模型配置」页面确认配置！")
+            if img is None:
+                return ({"请上传图片": 0.0}, "请上传一张图片。")
+            r = predict_single_image(
+                img, config["model_key"], config, inference_bundle
+            )
+            prob = r["probability"]
+            pred = r["label"].replace("✅ ", "").replace("❌ ", "")
+            return ({"有裂纹": prob, "无裂纹": 1.0 - prob},
+                    f"**预测**: {pred} | **置信度**: {r['confidence']:.4f}\n\n{r['detail']}")
 
-        _ensureCtx() {{
-            if (!this._ctx) {{
-                this._ctx = new (window.AudioContext || window.webkitAudioContext)();
-            }}
-            if (this._ctx.state === 'suspended') this._ctx.resume();
-            return this._ctx;
-        }},
-
-        _tone(freq, duration, type, sweepTo) {{
-            if (this._muted) return;
-            try {{
-                const ctx = this._ensureCtx();
-                const now = ctx.currentTime;
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = type || 'sine';
-                osc.frequency.setValueAtTime(freq, now);
-                if (sweepTo) osc.frequency.linearRampToValueAtTime(sweepTo, now + duration);
-                gain.gain.setValueAtTime(0.12, now);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-                osc.start(now);
-                osc.stop(now + duration);
-            }} catch(e) {{ /* 静默忽略音频错误 */ }}
-        }},
-
-        playHover() {{
-            if (this._muted) return;
-            const now = Date.now();
-            if (now - this._hoverThrottle < 80) return;
-            this._hoverThrottle = now;
-            this._tone(800, 0.05, 'square');
-        }},
-
-        playClick() {{
-            this._tone(1200, 0.10, 'sine');
-        }},
-
-        playStart() {{
-            this._tone(400, 0.30, 'sine', 800);
-        }},
-
-        playComplete() {{
-            if (this._muted) return;
-            try {{
-                const audio = document.getElementById('complete-audio');
-                if (audio && audio.src && !audio.src.endsWith('base64,')) {{
-                    audio.currentTime = 0;
-                    audio.play().catch(() => {{}});
-                }}
-            }} catch(e) {{}}
-        }},
-
-        playError() {{
-            this._tone(200, 0.20, 'sine');
-            setTimeout(() => this._tone(150, 0.25, 'triangle'), 200);
-        }},
-
-        setMuted(m) {{
-            this._muted = m;
-            document.getElementById('sound-toggle-label').textContent = m ? '🔇' : '🔊';
-        }},
-
-        toggle() {{
-            this.setMuted(!this._muted);
-            try {{ localStorage.setItem('bjtu_ml_sound_muted', this._muted ? '1' : '0'); }} catch(e) {{}}
-        }}
-    }};
-
-    // 从 localStorage 恢复静音状态
-    try {{
-        if (localStorage.getItem('bjtu_ml_sound_muted') === '1') {{
-            SoundEngine.setMuted(true);
-            document.getElementById('sound-toggle').checked = false;
-        }}
-    }} catch(e) {{}}
-
-    // 静音开关事件
-    document.getElementById('sound-toggle').addEventListener('change', function() {{
-        SoundEngine.toggle();
-    }});
-
-    // 按钮 hover/click 音效：找到 Gradio 主按钮并绑定
-    function bindButtonSounds() {{
-        const btns = document.querySelectorAll('button');
-        btns.forEach(function(btn) {{
-            if (btn.textContent.includes('运行训练链路')) {{
-                btn.addEventListener('mouseenter', function() {{ SoundEngine.playHover(); }});
-                btn.addEventListener('click', function() {{ SoundEngine.playStart(); }});
-            }}
-        }});
-    }}
-
-    // 下拉框 hover 音效
-    function bindDropdownSounds() {{
-        const dropdowns = document.querySelectorAll('select');
-        dropdowns.forEach(function(dd) {{
-            dd.addEventListener('mouseenter', function() {{ SoundEngine.playHover(); }});
-            dd.addEventListener('focus', function() {{ SoundEngine.playClick(); }});
-        }});
-    }}
-
-    // 轮询绑定（Gradio 动态渲染，延迟尝试）
-    let bindAttempts = 0;
-    const bindInterval = setInterval(function() {{
-        bindButtonSounds();
-        bindDropdownSounds();
-        bindAttempts++;
-        if (bindAttempts > 20) clearInterval(bindInterval);
-    }}, 500);
-
-    // MutationObserver: 监听 status_output 区域检测训练完成/出错
-    function setupStatusObserver() {{
-        const checkAndTrigger = function() {{
-            const statusEls = document.querySelectorAll('[data-testid="markdown"]');
-            statusEls.forEach(function(el) {{
-                const html = el.innerHTML || '';
-                if (html.includes('[SOUND:COMPLETE]')) {{
-                    el.innerHTML = html.replace('[SOUND:COMPLETE]', '');
-                    SoundEngine.playComplete();
-                }}
-                if (html.includes('[SOUND:ERROR]')) {{
-                    el.innerHTML = html.replace('[SOUND:ERROR]', '');
-                    SoundEngine.playError();
-                }}
-            }});
-        }};
-
-        const observer = new MutationObserver(function() {{
-            checkAndTrigger();
-        }});
-
-        // 观察整个 body 中 markdown 内容变化
-        observer.observe(document.body, {{ childList: true, subtree: true, characterData: true }});
-
-        // 也定期检查（兜底）
-        setInterval(checkAndTrigger, 800);
-    }}
-
-    // 页面加载完成后初始化
-    if (document.readyState === 'loading') {{
-        document.addEventListener('DOMContentLoaded', function() {{
-            setupStatusObserver();
-        }});
-    }} else {{
-        setupStatusObserver();
-    }}
-}})();
-</script>"""
-        gr.HTML(_sound_html, visible=True)
+        detect_btn.click(
+            fn=_detect, inputs=[detect_image, config_state, inference_state],
+            outputs=[detect_result, detect_detail])
 
     return app
-
-
-# ============================================================
-# 10. 主入口
-# ============================================================
 
 
 def main():
     app = create_interface()
     app.launch(
         server_name="127.0.0.1",
-        server_port=7860,
+        server_port=7890,
         share=False,
         show_error=True,
+        head="<style>h1,h3{text-align:center}.tabs>.tab-nav{justify-content:center}</style>",
     )
 
 
