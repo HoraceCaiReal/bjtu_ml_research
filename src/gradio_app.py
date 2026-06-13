@@ -1945,29 +1945,35 @@ def create_interface():
                     choices=["pretrained", "manual", "grid_search", "random_search"],
                     value="pretrained",
                     label="参数优化策略",
-                    info="pretrained=加载预训练模型 | manual=手动参数 | grid_search=GridSearchCV | random_search=RandomizedSearchCV",
+                    info="pretrained=加载预训练模型（最快）；manual=用当前手动参数训练；grid_search=穷举搜索最优组合；random_search=随机采样搜索",
                 )
                 with gr.Group(visible=False) as opt_search_params:
-                    cv_folds_opt = gr.Slider(2, 10, 3, step=1, label="CV 折数")
-                    n_iter = gr.Slider(10, 100, 30, step=10, label="随机搜索迭代次数 (仅RandomSearch)")
+                    cv_folds_opt = gr.Slider(2, 10, 3, step=1, label="CV 折数",
+                        info="交叉验证折数。折数越多评估越稳定但搜索耗时成倍增长；3-5 折为常用平衡范围")
+                    n_iter = gr.Slider(10, 100, 30, step=10, label="随机搜索迭代次数 (仅RandomSearch)",
+                        info="随机搜索的采样次数。越多越可能找到好参数组合；通常 30-50 次已足够覆盖主要参数空间")
 
                 with gr.Group(visible=True) as supervised_val:
                     validation_method = gr.Radio(
-                        choices=["holdout", "kfold"], value="holdout", label="验证方法")
+                        choices=["holdout", "kfold"], value="holdout", label="验证方法",
+                        info="holdout=单次划分验证（快、有方差）；kfold=K折交叉验证（更稳定可靠但慢K倍）")
                 with gr.Group(visible=False) as unsup_val:
                     unsup_val_method = gr.Radio(
                         choices=["internal_external", "internal_only", "external_only"],
-                        value="internal_external", label="评估指标范围")
+                        value="internal_external", label="评估指标范围",
+                        info="internal=轮廓系数等内部指标；external=对比真实标签的外部指标；internal_external=两者都显示")
 
                 with gr.Group(visible=False) as scoring_metric_grp:
                     scoring_metric = gr.Dropdown(
                         choices=["f1", "accuracy", "roc_auc", "precision", "recall"],
-                        value="f1", label="优化目标指标 (GridSearch/RandomSearch时使用)")
+                        value="f1", label="优化目标指标 (GridSearch/RandomSearch时使用)",
+                        info="参数搜索的优化目标。f1 平衡精确率和召回率；accuracy 适合平衡数据；roc_auc 评估排序质量")
 
                 with gr.Group(visible=False) as unsup_opt_info:
                     gr.Markdown("*💡 聚类方法的 GridSearch/RandomSearch 使用 **轮廓系数 (Silhouette)** 作为搜索目标（非监督指标）。*")
 
-                random_seed = gr.Number(42, label="随机种子", precision=0)
+                random_seed = gr.Number(42, label="随机种子", precision=0,
+                    info="随机种子。固定可复现结果；改变可测试模型对数据划分的稳定性")
 
                 run_btn = gr.Button("▶ 运行训练链路", variant="primary", size="lg")
 
