@@ -79,3 +79,7 @@ videos/*.mov
 _backup/
 scripts/*
 !scripts/e2e_test.py
+!scripts/generate_ppt_charts.py
+
+# PPT 演讲图表（演讲交付物，需纳入版本控制，覆盖上方 *.png 全局忽略）
+!reports/ppt图表输出/*.png
