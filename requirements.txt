@@ -23,7 +23,7 @@ Pillow==10.2.0               # PIL 图像处理
 
 # ---------- 可视化系统 ----------
 gradio>=4.36.0               # Gradio 可视化系统前端框架（src/gradio_app.py）
-joblib                       # 模型序列化（scikit-learn 内置，用于 .joblib 保存/加载）
+joblib==1.4.2                # 模型序列化（scikit-learn 内置，用于 .joblib 保存/加载）
 
 # ---------- Jupyter 与交互式系统 ----------
 jupyterlab==4.0.13

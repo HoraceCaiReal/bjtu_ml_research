@@ -56,6 +56,20 @@ copy .env.example .env
 
 这样 VSCode 的代码补全、调试、Jupyter 内核都会使用统一的 conda 环境。
 
+### 1.4 运行 Gradio 可视化系统
+
+本项目的核心可视化交付物是 `src/gradio_app.py`（裂纹识别交互式 Web 界面，3 个 Tab：模型配置 / 模型评估 / 单图检测）。环境配置完成后，直接运行：
+
+```powershell
+# 确保已激活 bjtu_ml 环境并在仓库根目录
+conda activate bjtu_ml
+python src/gradio_app.py
+```
+
+启动后在浏览器打开终端输出的本地地址（默认 `http://127.0.0.1:7860`）即可使用。仓库已内置预训练模型（`outputs/models/`），无需训练即可加载演示；若需完整复现训练流程，请按 `notebooks/01~04` 顺序运行。
+
+> **关于 PyTorch 安装源**：`requirements.txt` 默认使用国内阿里云镜像（`--extra-index-url https://mirrors.aliyun.com/pytorch-wheels/cu118`）以加速下载。境外网络如该镜像不可达，可将该行改为官方源 `https://download.pytorch.org/whl/cu118`。
+
 ---
 
 ## 二、协作流程（Git 分支 + 合并）

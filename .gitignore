@@ -58,12 +58,13 @@ Thumbs.db
 # 使用 xxx/* 而非 xxx/ 以确保 .gitkeep 能被 Git 追踪
 outputs/*
 !outputs/.gitkeep
-# 预训练模型和结果对比表提交到 Git（可视化系统需要）
+# 预训练模型和结果对比表【有意提交】（Gradio 可视化系统运行时依赖）
+# 上方的 *.pth / *.joblib / *.h5 / *.pkl 全局忽略在此通过 ! 规则放行：
+# outputs/models、scalers、results 下的权重与结果文件都纳入版本控制，
+# 保证克隆后无需训练即可加载演示（数据集保密、不可复现训练的前提下）。
 !outputs/models/
 !outputs/scalers/
 !outputs/results/
-# GMM 全协方差模型过大（~778MB），不提交，handler 运行时现场训练
-outputs/models/unsupervised/gmm_best.joblib
 results/*
 logs/*
 
