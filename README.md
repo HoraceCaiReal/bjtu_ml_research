@@ -1,8 +1,8 @@
 # 裂纹图像识别系统 — 研究性专题
 
 > 《机器学习与Python编程》课程研究性专题（测控系）
-> 组员：李嘉维（旧仓库管理员+协作者）、蔡昊伭（新仓库管理员）、梁静瑶（协作者）、王梓铭（协作者）
-> 日期：2026年5月19日
+> 组员：梁静瑶（数据处理 & 部分传统监督方法）、李嘉维（决策树及其衍生方法）、蔡昊伭（无监督聚类）、王梓铭（CNN & 可视化系统）、王籽昕（汇报内容制作）
+> 指导教师：阮涛
 
 ---
 
@@ -172,20 +172,32 @@ bjtu_ml_research/
 ├── data/                           # 数据集（被 .gitignore 忽略，不上传）
 │   ├── Negative/                   # 20000 张无裂纹图像（本地存放）
 │   ├── Positive/                   # 20000 张有裂纹图像（本地存放）
+│   └── real_test/                  # 真实测试照片（本地存放）
 ├── docs/                           # 文档、讨论记录、分工说明
 │   ├── 分工说明.md
 │   ├── 目录结构说明.md
-│   └── 讨论记录/                   # 每次讨论新建一个 md 文件
+│   ├── 项目进展里程碑.md
+│   ├── 协作者初始化说明.md
+│   ├── 日常协作流程.md
+│   └── 讨论记录/                   # 讨论迁移至 GitHub Issues
 ├── notebooks/                      # Jupyter Notebook（研究报告主体，所有代码内联于此）
 │   ├── 01_数据处理与特征工程.ipynb     # 数据加载、划分策略、预处理、特征提取对比
 │   ├── 02_传统监督学习对比.ipynb       # 7种分类器（DT/SVM/NB/RF/LR/XGBoost/LightGBM）
-│   ├── 03_深度学习对比.ipynb           # CrackCNN + 6种损失函数 + 超参数搜索
-│   ├── 04_无监督学习对比.ipynb         # 5种聚类方法对比
+│   ├── 03_深度学习对比.ipynb           # CrackCNN + 6种损失函数 + 优化器 + 超参数搜索
+│   ├── 04_无监督学习对比.ipynb         # 5种聚类方法对比 + PCA 降维分析
 │   └── 05_Gradio接口规范.ipynb         # 可视化系统统一接口规范
-├── scripts/                        # 辅助脚本
-├── reports/                        # 导出的 PDF/HTML 报告（保留目录，不上传大文件）
+├── scripts/                        # 辅助脚本（预训练、批量验证、图表生成等）
+├── src/                            # 源代码
+│   └── gradio_app.py              # Gradio 可视化系统（自包含，2974 行）
+├── reports/                        # 报告与图表
+│   ├── 组合验证评估报告.md
+│   ├── 项目汇报设计辅助文档.md
+│   ├── 可视化界面开发接口参考.md
+│   └── ppt图表输出/                # F0-F17 图表 + 数据 CSV
+├── tests/                          # 集成测试
+├── outputs/                        # 实验输出（模型、结果、验证报告）
+├── sound/                          # 音效文件
 ├── videos/                         # 操作演示视频（保留目录，不上传大文件）
-├── outputs/                        # 实验输出（图片、日志等）
 ├── .gitignore                      # 数据与临时文件排除规则
 ├── .python-version                 # Python 版本锁定（3.10）
 ├── environment.yml                 # Anaconda 环境定义（团队共享）
@@ -287,7 +299,7 @@ conda env update -f environment.yml --prune
 `environment.yml` 是 Anaconda 的原生环境定义文件，比 `requirements.txt` 更适合团队：
 
 - **明确指定 Python 版本**（3.10），避免各成员 Python 版本不一致
-- **区分 conda 包和 pip 包**：NumPy、Pandas 等用 conda 安装更稳定；PyTorch CUDA 版本通过 pip + `--extra-index-url` 安装，确保获取正确的 GPU 轮子
+- **区分 conda 包和 pip 包**：NumPy、Pandas、scikit-learn、scikit-image 等用 conda 安装更稳定；PyTorch CUDA 版本、Gradio、XGBoost、LightGBM 通过 pip 安装，确保获取正确的 GPU 轮子
 - **PyTorch CUDA 版**：通过 pip 指定 `+cu118` 后缀和阿里云镜像，确保安装 CUDA 11.8 版本；代码中自动检测 GPU 可用性，无 GPU 时回退到 CPU
 - **跨平台一致**：conda 会自动处理 Windows 上的二进制依赖
 
@@ -409,7 +421,7 @@ git push origin main
 - [ ] GitHub 仓库已创建，协作者已添加为 Collaborator
 - [ ] 本地 `git clone` 成功，能正常拉取和推送
 - [ ] `conda env create -f environment.yml` 成功，无报错
-- [ ] `conda activate bjtu_ml` 后，能 `import torch, sklearn, cv2, ipywidgets`
+- [ ] `conda activate bjtu_ml` 后，能 `import torch, sklearn, cv2, ipywidgets, gradio`
 - [ ] 已复制 `.env.example` 为 `.env` 并配置好数据集路径
 - [ ] 打开 `notebooks/01_数据处理与特征工程.ipynb`，运行第一个 cell 能正确加载数据集
 - [ ] `nbstripout --install` 已执行

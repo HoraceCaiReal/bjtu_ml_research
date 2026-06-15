@@ -4,10 +4,10 @@ torchvision==0.16.1+cu118
 --extra-index-url https://mirrors.aliyun.com/pytorch-wheels/cu118
 
 # ---------- 传统机器学习 ----------
-scikit-learn==1.4.2          # 决策树、SVM、K-Means
-scikit-image==0.22.0         # 图像预处理（特征提取等）
-xgboost==2.0.3               # 可选：梯度提升树对比
-lightgbm==4.3.0              # 可选：高效梯度提升树对比
+scikit-learn==1.4.2          # 7种传统分类器（DT/SVM/NB/RF/LR/XGBoost/LightGBM）+ 无监督聚类 + 特征工程
+scikit-image==0.22.0         # HOG/LBP/GLCM 特征提取
+xgboost==2.0.3               # 梯度提升树对比
+lightgbm==4.3.0              # 高效梯度提升树对比
 
 # ---------- 预训练模型库（可选扩展） ----------
 timm==0.9.12                 # PyTorch Image Models
@@ -15,16 +15,20 @@ timm==0.9.12                 # PyTorch Image Models
 # ---------- 数据处理与可视化 ----------
 numpy==1.26.4
 pandas==2.1.4
-matplotlib==3.8.4            # 微软雅黑字体已通过 src/plot_config.py 配置
-seaborn==0.13.2
+matplotlib==3.8.4            # 混淆矩阵/ROC/PR/训练曲线等图表
+seaborn==0.13.2              # 统计图表
 plotly==5.18.0               # 交互式图表
-opencv-python==4.9.0.80      # 图像读取与基础处理
+opencv-python==4.9.0.80      # 图像读取与预处理（CLAHE/高斯/中值滤波）
 Pillow==10.2.0               # PIL 图像处理
+
+# ---------- 可视化系统 ----------
+gradio>=4.36.0               # Gradio 可视化系统前端框架（src/gradio_app.py）
+joblib                       # 模型序列化（scikit-learn 内置，用于 .joblib 保存/加载）
 
 # ---------- Jupyter 与交互式系统 ----------
 jupyterlab==4.0.13
 notebook==7.0.8              # 兼容传统 .ipynb 打开方式
-ipywidgets==8.1.1            # 综合展示系统 GUI 核心
+ipywidgets==8.1.1            # Jupyter 交互控件
 ipykernel==6.29.5            # VSCode 运行 Jupyter 所需
 tqdm==4.66.6                 # 进度条
 
@@ -36,7 +40,7 @@ ruff==0.15.11                # Python 代码格式化与检查（替代 Black）
 
 # ---------- 工具库 ----------
 PyYAML==6.0.3
-scipy==1.11.4                # 科学计算（优化、统计等）
+scipy==1.11.4                # 科学计算（优化、统计、距离计算等）
 python-dotenv==1.0.0         # 读取 .env 环境变量
 nbstripout==0.7.1            # 自动清除 Notebook 输出（协作必备）
 tensorboard==2.15.1          # 训练过程可视化（可选）
