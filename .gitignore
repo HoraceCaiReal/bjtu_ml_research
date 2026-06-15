@@ -77,9 +77,10 @@ videos/*.mov
 !reports/.gitkeep
 !data/.gitkeep_backup/
 _backup/
-scripts/*
-!scripts/e2e_test.py
-!scripts/generate_ppt_charts.py
+# scripts 目录：作为项目测试代码纳入版本控制，仅排除运行产物/缓存
+scripts/__pycache__/
+scripts/_nb_test/
+scripts/test_result.txt
 
 # PPT 演讲图表（演讲交付物，需纳入版本控制，覆盖上方 *.png 全局忽略）
 !reports/ppt图表输出/*.png
