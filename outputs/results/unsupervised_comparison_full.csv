@@ -1,0 +1,5 @@
+﻿method,n_clusters,n_noise,silhouette,davies_bouldin,calinski_harabasz,ari,nmi
+K-Means,2,0,0.0395,4.9089,78.05,0.1039,0.0808
+GMM,2,0,0.0395,4.9089,78.05,0.1039,0.0808
+层次聚类(ward),2,0,0.0628,4.9018,61.27,0.1534,0.1934
+谱聚类(rbf),2,0,-0.0407,1.0802,1.65,0.0,0.002

@@ -64,6 +64,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 RESULTS_DIR = PROJECT_ROOT / "outputs" / "results"
 MODELS_DIR = PROJECT_ROOT / "outputs" / "models"
+UNSUP_DIR = MODELS_DIR / "unsupervised"
 COMBO_DIR = PROJECT_ROOT / "outputs" / "combo_verify"
 BATCH_DIR = PROJECT_ROOT / "outputs" / "batch_verify" / "20260613_043410"
 
@@ -450,6 +451,17 @@ def _load_unsup():
     return df
 
 
+def _load_unsup_full():
+    """读取 outputs/results/unsupervised_comparison_full.csv（同口径补 CH/DB 的全指标对比）。
+    由 scripts/gen_unsup_ch_pca_data.py 生成，与 unsupervised_comparison.csv 同口径
+    (per_class=1000, random_state=42, extract_features_reduced)，额外含
+    davies_bouldin / calinski_harabasz 列。"""
+    df = pd.read_csv(RESULTS_DIR / "unsupervised_comparison_full.csv")
+    order = ["K-Means", "GMM", "层次聚类(ward)", "谱聚类(rbf)"]
+    df = df.set_index("method").loc[order].reset_index()
+    return df
+
+
 def draw_F6():
     """无监督聚类对比（轮廓系数 / ARI / NMI，均来自 unsupervised_comparison.csv 同源数据）。"""
     df = _load_unsup()
@@ -575,6 +587,224 @@ def draw_F12():
     return _save(fig, "F12_全方法效果总结.png")
 
 
+def draw_F13():
+    """无监督聚类内部指标对比：Calinski-Harabasz (↑越优) 与 Davies-Bouldin (↓越优)。
+    数据源：outputs/results/unsupervised_comparison_full.csv（同口径补 CH/DB）。"""
+    df = _load_unsup_full()
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+    # 左：Calinski-Harabasz（值越大越好）
+    ch_vals = df["calinski_harabasz"].astype(float).values
+    b1 = axes[0].bar(df["method"], ch_vals, color=COLOR_UNSUP, edgecolor="white", linewidth=1.5)
+    _bar_label(axes[0], b1, fmt="{:.2f}", offset=max(ch_vals.max(), 0.01) * 0.03)
+    axes[0].set_title("Calinski-Harabasz 指数 (↑ 越大越好)", fontweight="bold")
+    axes[0].set_xticklabels(df["method"], rotation=20, ha="right")
+    axes[0].set_ylabel("CH 指数")
+    axes[0].set_ylim(0, max(ch_vals.max(), 0.01) * 1.35)
+    # 右：Davies-Bouldin（值越小越好）
+    db_vals = df["davies_bouldin"].astype(float).values
+    b2 = axes[1].bar(df["method"], db_vals, color="#e74c3c", edgecolor="white", linewidth=1.5)
+    _bar_label(axes[1], b2, fmt="{:.4f}", offset=max(db_vals.max(), 0.01) * 0.03)
+    axes[1].set_title("Davies-Bouldin 指数 (↓ 越小越好)", fontweight="bold")
+    axes[1].set_xticklabels(df["method"], rotation=20, ha="right")
+    axes[1].set_ylabel("DB 指数")
+    axes[1].set_ylim(0, max(db_vals.max(), 0.01) * 1.35)
+    plt.suptitle("无监督聚类内部指标对比（CH 与 DB，均无需真实标签）",
+                 fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    return _save(fig, "F13_CH与DB指数对比.png")
+
+
+def draw_F14():
+    """PCA 2D 降维可视化：左=按聚类标签着色，右=按真实标签(裂纹/无裂纹)着色。
+    数据源：outputs/models/unsupervised/pca_analysis.npz。"""
+    npz = np.load(UNSUP_DIR / "pca_analysis.npz", allow_pickle=True)
+    X_2d = npz["X_pca_2d"]
+    true_labels = npz["true_labels"]
+    cluster_labels = npz["cluster_labels"]
+    cluster_method = str(npz["cluster_method"])
+    var2 = float(np.array([npz["explained_var_ratio"][0], npz["explained_var_ratio"][1]]).sum())
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+    # 左：按聚类标签着色
+    for lab, color, name in [(0, "#9b59b6", "簇 0"), (1, "#f1c40f", "簇 1")]:
+        m = cluster_labels == lab
+        axes[0].scatter(X_2d[m, 0], X_2d[m, 1], c=color, s=14, alpha=0.6,
+                        edgecolors="white", linewidths=0.3, label=name)
+    axes[0].set_title(f"按聚类标签着色（来源: {cluster_method}）", fontweight="bold")
+    axes[0].set_xlabel(f"主成分 1 ({npz['explained_var_ratio'][0]*100:.1f}%)")
+    axes[0].set_ylabel(f"主成分 2 ({npz['explained_var_ratio'][1]*100:.1f}%)")
+    axes[0].legend(loc="best"); axes[0].grid(True, alpha=0.3)
+    # 右：按真实标签着色
+    for lab, color, name in [(0, "#2ecc71", "无裂纹"), (1, "#e74c3c", "有裂纹")]:
+        m = true_labels == lab
+        axes[1].scatter(X_2d[m, 0], X_2d[m, 1], c=color, s=14, alpha=0.6,
+                        edgecolors="white", linewidths=0.3, label=name)
+    axes[1].set_title("按真实标签着色（裂纹 / 无裂纹）", fontweight="bold")
+    axes[1].set_xlabel(f"主成分 1 ({npz['explained_var_ratio'][0]*100:.1f}%)")
+    axes[1].set_ylabel(f"主成分 2 ({npz['explained_var_ratio'][1]*100:.1f}%)")
+    axes[1].legend(loc="best"); axes[1].grid(True, alpha=0.3)
+    plt.suptitle(f"PCA 2D 降维可视化（前 2 主成分保留 {var2*100:.1f}% 方差）——"
+                 "两类在 2D 空间高度重叠，印证无监督难以分离",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    return _save(fig, "F14_PCA降维2D可视化.png")
+
+
+def draw_F15():
+    """PCA 累计解释方差比 scree 图：柱状(各主成分方差) + 累计折线(双轴)。
+    数据源：outputs/models/unsupervised/pca_analysis.npz。"""
+    npz = np.load(UNSUP_DIR / "pca_analysis.npz", allow_pickle=True)
+    evr = npz["explained_var_ratio"]
+    cum = npz["explained_var_cumsum"]
+    n_keep = int(npz["n_components_reduced"])
+    var_kept = float(npz["var_kept"])
+    n_show = min(len(evr), 30)  # 仅展示前 30 个主成分（后面接近 0）
+    x = np.arange(1, n_show + 1)
+    fig, ax1 = plt.subplots(figsize=(12, 5.5))
+    bars = ax1.bar(x, evr[:n_show] * 100, color="#9b59b6", alpha=0.65,
+                   edgecolor="white", linewidth=0.8, label="各主成分方差占比")
+    ax1.set_xlabel("主成分序号")
+    ax1.set_ylabel("单成分方差占比 (%)", color=COLOR_UNSUP)
+    ax1.set_ylim(0, max(evr[:n_show].max() * 100 * 1.3, 1))
+    ax1.tick_params(axis="y", labelcolor=COLOR_UNSUP)
+    # 双轴：累计方差
+    ax2 = ax1.twinx()
+    ax2.plot(x, cum[:n_show] * 100, "o-", color="#e74c3c", linewidth=2.5,
+             markersize=6, label="累计方差占比")
+    ax2.axhline(90, ls="--", color="gray", alpha=0.5)
+    ax2.set_ylabel("累计方差占比 (%)", color="#e74c3c")
+    ax2.set_ylim(0, 105)
+    ax2.tick_params(axis="y", labelcolor="#e74c3c")
+    # 标注降到 n_keep 维的点
+    if n_keep <= n_show:
+        ax2.annotate(f"降到 {n_keep} 维\n保留 {var_kept*100:.1f}%",
+                     xy=(n_keep, cum[n_keep-1] * 100),
+                     xytext=(n_keep + 2, cum[n_keep-1] * 100 - 18),
+                     fontsize=10, fontweight="bold", color="#c0392b",
+                     arrowprops=dict(arrowstyle="->", color="#c0392b"))
+    lines1, labs1 = ax1.get_legend_handles_labels()
+    lines2, labs2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labs1 + labs2, loc="center right")
+    ax1.set_title(f"PCA 累计解释方差比（共展示前 {n_show} 个主成分；"
+                  f"降至 {n_keep} 维可保留 {var_kept*100:.1f}% 方差）",
+                  fontsize=13, fontweight="bold")
+    return _save(fig, "F15_PCA累计方差解释比.png")
+
+
+def draw_F16():
+    """PCA 降维前后聚类指标对比：silhouette / CH / ARI，x=4方法，分组柱状。
+    数据源：outputs/results/unsupervised_pca_comparison.csv。
+    注：谱聚类在 PCA 降维后可能退化为单簇，对应指标为 NaN（图上以"退化"标注）。"""
+    df = pd.read_csv(RESULTS_DIR / "unsupervised_pca_comparison.csv")
+    df.to_csv(OUT_DIR / "_data_F16.csv", index=False)
+    x = np.arange(len(df)); w = 0.38
+    metrics = [
+        ("silhouette", "轮廓系数 Silhouette", "{:.4f}"),
+        ("calinski_harabasz", "Calinski-Harabasz 指数", "{:.2f}"),
+        ("ari", "ARI (与真实标签一致性)", "{:.4f}"),
+    ]
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.8))
+    for ax, (col, title, fmt) in zip(axes, metrics):
+        orig = df[f"{col}_orig"].astype(float).values
+        pca_raw = df[f"{col}_pca"].astype(float).values
+        # NaN（单簇退化）按 0 画柱，单独标注
+        pca = np.where(np.isnan(pca_raw), 0.0, pca_raw)
+        orig_safe = np.where(np.isnan(orig), 0.0, orig)
+        b1 = ax.bar(x - w / 2, orig_safe, w, label="原始特征空间",
+                    color=COLOR_UNSUP, edgecolor="white", linewidth=1.2)
+        b2 = ax.bar(x + w / 2, pca, w, label="PCA 降维后",
+                    color="#1abc9c", edgecolor="white", linewidth=1.2)
+        # 数值标签（跳过 NaN）
+        for bars, vals, raw in [(b1, orig_safe, orig), (b2, pca, pca_raw)]:
+            for bar, v, rv in zip(bars, vals, raw):
+                if np.isnan(rv):
+                    ax.text(bar.get_x() + bar.get_width() / 2, 0.002,
+                            "退化", ha="center", va="bottom", fontsize=8,
+                            fontweight="bold", color="#7f8c8d", rotation=90)
+                else:
+                    ax.text(bar.get_x() + bar.get_width() / 2, v + max(np.nanmax(np.concatenate([orig, pca])), 0.01) * 0.04,
+                            fmt.format(v), ha="center", va="bottom", fontsize=9, fontweight="bold")
+        ax.set_title(title, fontweight="bold")
+        ax.set_xticks(x); ax.set_xticklabels(df["method"], rotation=20, ha="right")
+        vmax = max(np.nanmax(np.concatenate([orig_safe, pca])), 0.05)
+        ax.set_ylim(0, vmax * 1.4)
+        ax.legend(loc="upper right", fontsize=9)
+    plt.suptitle("PCA 降维前后聚类效果对比（GMM 降维后 ARI 暴涨至 0.91，谱聚类退化为单簇）",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    return _save(fig, "F16_PCA降维前后聚类对比.png")
+
+
+def draw_F17():
+    """GMM 降维后 ARI=0.91 现象的综合证据图（1×3）。
+    数据源：outputs/results/gmm_evidence.npz（gen_unsup_gmm_evidence.py 产出）。
+    证据1：GMM 多种子稳定性（10 seed 全为 0.91，证明非偶然）。
+    证据2：PCA 维度-ARI 曲线（GMM vs K-Means，展示第 3-10 主成分后分化）。
+    证据3：GMM 协方差类型对比（full>diag>spherical>tied，证明椭球簇假设）。"""
+    npz = np.load(RESULTS_DIR / "gmm_evidence.npz", allow_pickle=True)
+    seed_aris = npz["seed_aris"]
+    n_seeds = int(npz["n_seeds"])
+    dims = npz["pca_dims"]
+    gmm_dim_aris = npz["gmm_dim_aris"]
+    km_dim_aris = npz["km_dim_aris"]
+    cov_types = list(npz["cov_types"])
+    cov_aris = npz["cov_aris"]
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 4.8))
+
+    # ---- 证据1：多种子稳定性柱状图 ----
+    ax1 = axes[0]
+    bars = ax1.bar(np.arange(1, n_seeds + 1), seed_aris,
+                   color=COLOR_UNSUP, edgecolor="white", linewidth=1.2)
+    ax1.axhline(seed_aris.mean(), ls="--", color="#e74c3c", alpha=0.7,
+                label=f"均值={seed_aris.mean():.4f}\n标准差={seed_aris.std():.4f}")
+    ax1.set_xlabel("随机种子序号"); ax1.set_ylabel("ARI")
+    ax1.set_title("证据①：GMM(full) 多种子稳定性", fontweight="bold")
+    ax1.set_ylim(0, 1.05); ax1.legend(loc="lower right", fontsize=9)
+    ax1.set_xticks(np.arange(1, n_seeds + 1))
+
+    # ---- 证据2：PCA 维度-ARI 曲线 ----
+    ax2 = axes[1]
+    ax2.plot(dims, gmm_dim_aris, "o-", color=COLOR_UNSUP, linewidth=2.5,
+             markersize=9, label="GMM (full)")
+    ax2.plot(dims, km_dim_aris, "s-", color="#1abc9c", linewidth=2.5,
+             markersize=9, label="K-Means")
+    ax2.axhline(0.9, ls="--", color="gray", alpha=0.4)
+    ax2.fill_between([dims.min(), dims.max()], 0, 0.1, color="#e74c3c", alpha=0.06)
+    ax2.text(dims[-1] * 0.6, 0.04, "K-Means 全程 ≤0.10\n（球簇假设失效）",
+             fontsize=8, color="#c0392b")
+    ax2.annotate("≥10 维后\nGMM 稳定在 0.91+", xy=(10, 0.912), xytext=(12, 0.5),
+                 fontsize=9, fontweight="bold", color=COLOR_UNSUP,
+                 arrowprops=dict(arrowstyle="->", color=COLOR_UNSUP))
+    ax2.set_xlabel("PCA 保留主成分数"); ax2.set_ylabel("ARI")
+    ax2.set_title("证据②：PCA 维度-ARI 曲线", fontweight="bold")
+    ax2.set_ylim(-0.02, 1.05); ax2.legend(loc="lower right", fontsize=9)
+    ax2.grid(True, alpha=0.3)
+
+    # ---- 证据3：GMM 协方差类型对比 ----
+    ax3 = axes[2]
+    # 协方差自由度递增排序展示
+    order = ["spherical", "diag", "tied", "full"]
+    cov_desc = {"full": "full\n(完整协方差)", "tied": "tied\n(共享协方差)",
+                "diag": "diag\n(对角协方差)", "spherical": "spherical\n(球形)"}
+    idx = [cov_types.index(c) for c in order]
+    vals = cov_aris[idx]
+    colors = ["#bdc3c7", "#1abc9c", "#e74c3c", COLOR_UNSUP]
+    bars = ax3.bar([cov_desc[c] for c in order], vals, color=colors,
+                   edgecolor="white", linewidth=1.5)
+    for bar, v in zip(bars, vals):
+        ax3.text(bar.get_x() + bar.get_width() / 2, v + 0.02, f"{v:.4f}",
+                 ha="center", va="bottom", fontsize=10, fontweight="bold")
+    ax3.axhline(0.9, ls="--", color="gray", alpha=0.4)
+    ax3.set_ylabel("ARI (seed=42, 51维)")
+    ax3.set_title("证据③：协方差类型对比（越自由越优）", fontweight="bold")
+    ax3.set_ylim(0, 1.1)
+
+    plt.suptitle("GMM + PCA 降维 ARI=0.91 的三重证据：结果稳定 · 非偶然 · 椭球簇结构真实存在",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    return _save(fig, "F17_GMM证据综合图.png")
+
+
 # ---- 需运行实验的图表 ----
 def draw_F1(images, labels):
     df = compare_split_strategies(images, labels, max_samples=2000, random_seed=42)
@@ -677,7 +907,8 @@ def main():
 
     # ---- 零训练组（仅读持久化数据）----
     print("[零训练组]")
-    for fn in [draw_F0, draw_F2, draw_F4, draw_F5, draw_F6, draw_F7, draw_F8, draw_F9, draw_F12]:
+    for fn in [draw_F0, draw_F2, draw_F4, draw_F5, draw_F6, draw_F7, draw_F8, draw_F9,
+               draw_F12, draw_F13, draw_F14, draw_F15, draw_F16, draw_F17]:
         try:
             fn()
         except Exception as e:

@@ -1,0 +1,5 @@
+method,silhouette_orig,silhouette_pca,calinski_harabasz_orig,calinski_harabasz_pca,ari_orig,ari_pca
+K-Means,0.0395,0.1141,78.05,247.03,0.1039,0.1026
+GMM,0.0395,0.091,78.05,83.6,0.1039,0.9139
+层次聚类(ward),0.0628,0.0989,61.27,200.06,0.1534,0.1193
+谱聚类(rbf),-0.0407,,1.65,,0.0,0.0
