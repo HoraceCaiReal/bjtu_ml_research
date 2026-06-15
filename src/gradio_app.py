@@ -213,6 +213,46 @@ def extract_features_separate(image: np.ndarray) -> dict:
     }
 
 
+def _generate_patches(
+    gray: np.ndarray, patch_size: int = 227, stride: int = None
+):
+    """把大图切成重叠的 patch_size×patch_size 块，用于真实照片的滑窗推理。
+
+    训练集 SDNET2018 为 227×227 紧密裁剪贴片（裂缝占满画面），
+    而真实拍摄的照片裂缝常只占画面一角；直接整图 resize 会被背景淹没。
+    按训练尺度切块可恢复与训练分布一致的视角。
+
+    - stride 默认 = patch_size // 2（50% 重叠，避免裂缝恰被切断导致漏检）
+    - 图比 patch 小则直接返回整图一块（box 为原图尺寸）
+    - 返回 (patches_list, patch_boxes)，box 格式 (x, y, w, h) 为原图坐标
+    """
+    H, W = gray.shape[:2]
+    if H <= patch_size and W <= patch_size:
+        return [gray.copy()], [(0, 0, W, H)]
+    if stride is None:
+        stride = patch_size // 2
+    patches, boxes = [], []
+    # 以 patch 右下角对齐图像边界的方式生成网格起点，保证边角被覆盖
+    ys = list(range(0, max(H - patch_size, 0) + 1, stride))
+    xs = list(range(0, max(W - patch_size, 0) + 1, stride))
+    if ys[-1] + patch_size < H:
+        ys.append(max(H - patch_size, 0))
+    if xs[-1] + patch_size < W:
+        xs.append(max(W - patch_size, 0))
+    for y in ys:
+        for x in xs:
+            crop = gray[y:y + patch_size, x:x + patch_size]
+            ch, cw = crop.shape[:2]
+            # 边缘不足 patch_size 的块补齐，保证特征/tensor 维度一致
+            if ch < patch_size or cw < patch_size:
+                pad = np.zeros((patch_size, patch_size), dtype=gray.dtype)
+                pad[:ch, :cw] = crop
+                crop = pad
+            patches.append(crop)
+            boxes.append((x, y, cw, ch))
+    return patches, boxes
+
+
 def _subsample_balanced(images, labels, max_samples, random_seed):
     rng = np.random.default_rng(random_seed)
     n_per_class = max_samples // 2
@@ -2117,25 +2157,13 @@ def _bundle_matches_config(bundle: dict, model_key: str, config: dict) -> bool:
     return False
 
 
-def predict_single_image(
-    image: np.ndarray,
-    model_key: str,
-    config: dict,
-    inference_bundle: dict = None,
-) -> dict:
-    """对单张上传图片进行裂纹检测。"""
-    if image is None:
-        return {"label": "等待上传", "confidence": 0.0, "probability": 0.0, "detail": "请先上传图片"}
-
+def _apply_single_image_preprocessing(image: np.ndarray, config: dict) -> np.ndarray:
+    """单图检测的公共预处理：RGB→灰度 → CLAHE/median 等。返回处理后的灰度图。"""
     if image.ndim == 3:
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
     else:
         gray = image.copy()
-
     preprocessing_list = config.get("preprocessing_list", ["clahe", "median"])
-    feature_list = config.get("features", ["hog", "lbp", "glcm", "edge_density"])
-    model_params = config.get("model_params", {})
-
     pp_map = {
         "none": lambda img: img, "clahe": lambda img: apply_clahe(img),
         "gaussian": lambda img: apply_gaussian_filter(img),
@@ -2146,129 +2174,210 @@ def predict_single_image(
     for p in preprocessing_list:
         if p in pp_map and p != "none":
             gray = pp_map[p](gray)
+    return gray
 
+
+def predict_single_image(
+    image: np.ndarray,
+    model_key: str,
+    config: dict,
+    inference_bundle: dict = None,
+) -> dict:
+    """对单张上传图片进行裂纹检测。
+
+    真实拍摄的彩色照片分辨率通常远大于训练集贴片（SDNET2018 为 227×227），
+    直接整图 resize 会让裂缝信号被背景淹没。当任一维度超过 PATCH_SIZE*1.5
+    时启用滑窗切块：按训练尺度切重叠小块，每块独立预测后取最大裂缝概率。
+    小图（含全部数据集贴片）仍走单块路径，检出结果与改前完全一致。
+    """
+    if image is None:
+        return {"label": "等待上传", "confidence": 0.0, "probability": 0.0, "detail": "请先上传图片"}
+
+    # 无监督模型不支持单图分类，提前拦截，避免下面白白做预处理
+    if model_key in UNSUP_MODEL_KEYS:
+        return {"label": "不支持", "confidence": 0, "probability": 0,
+                "detail": "无监督模型不支持单张图片分类，请在「模型评估」页面进行批量评估。"}
+
+    try:
+        gray = _apply_single_image_preprocessing(image, config)
+        # PATCH_SIZE 与训练集 native 分辨率一致，保证切块视野贴近训练分布
+        PATCH_SIZE = 227
+        H, W = gray.shape[:2]
+        # 阈值 1.5×patch：比这小的图（含全部数据集贴片）直接单块，行为不变
+        use_patches = (H > PATCH_SIZE * 1.5) or (W > PATCH_SIZE * 1.5)
+        if use_patches:
+            return _predict_patches(gray, PATCH_SIZE, model_key, config, inference_bundle)
+        return _predict_patch(gray, model_key, config, inference_bundle)
+    except Exception as e:
+        return {"label": "错误", "confidence": 0, "probability": 0,
+                "detail": f"预测失败: {str(e)}"}
+
+
+def _predict_patch(
+    patch_gray: np.ndarray,
+    model_key: str,
+    config: dict,
+    inference_bundle: dict = None,
+) -> dict:
+    """对单个 patch（已预处理灰度图，尺寸接近训练尺度）做单块推理。
+
+    patch_gray 可以是任意尺寸：传统分支会 resize 到 227×227，
+    CNN 分支会 resize 到 input_size。返回 {label, confidence, probability, detail}，
+    其中 detail 不含切块信息（切块统计由 _predict_patches 补充）。
+    """
+    feature_list = config.get("features", ["hog", "lbp", "glcm", "edge_density"])
+    model_params = config.get("model_params", {})
     feat_map = {
         "hog": extract_hog_features, "lbp": extract_lbp_features,
         "glcm": extract_glcm_features,
         "edge_density": lambda img: np.array([extract_edge_density(img)]),
     }
 
-    try:
-        if model_key in TRAD_MODEL_KEYS:
-            gray = cv2.resize(gray, (227, 227))
-            parts = [feat_map[f](gray) for f in feature_list if f in feat_map]
-            feats = np.concatenate(parts).reshape(1, -1)
-            using_session_model = _bundle_matches_config(
-                inference_bundle, model_key, config
-            )
-            if using_session_model:
-                model = inference_bundle["model"]
-                model_source = "当前评估模型"
-            else:
-                model_path = TRAD_DIR / f"{model_key}_best.joblib"
-                if not model_path.exists():
-                    return {
-                        "label": "错误",
-                        "confidence": 0,
-                        "probability": 0,
-                        "detail": f"预训练模型未找到: {model_path.name}",
-                    }
-                model = joblib.load(model_path)
-                expected_features = getattr(model, "n_features_in_", None)
-                if expected_features is not None and expected_features != feats.shape[1]:
-                    return {
-                        "label": "错误",
-                        "confidence": 0,
-                        "probability": 0,
-                        "detail": (
-                            f"当前选择生成 {feats.shape[1]} 维特征，预训练模型需要 "
-                            f"{expected_features} 维。请先在「模型评估」运行当前配置，"
-                            "再进行单图检测。"
-                        ),
-                    }
-                model_source = "磁盘预训练模型"
-            y_prob = model.predict_proba(feats)[0]
-            y_pred = int(np.argmax(y_prob))
-            prob = float(y_prob[1]) if len(y_prob) > 1 else float(y_prob[0])
+    if model_key in TRAD_MODEL_KEYS:
+        gray = cv2.resize(patch_gray, (227, 227))
+        parts = [feat_map[f](gray) for f in feature_list if f in feat_map]
+        feats = np.concatenate(parts).reshape(1, -1)
+        using_session_model = _bundle_matches_config(
+            inference_bundle, model_key, config
+        )
+        if using_session_model:
+            model = inference_bundle["model"]
+            model_source = "当前评估模型"
+        else:
+            model_path = TRAD_DIR / f"{model_key}_best.joblib"
+            if not model_path.exists():
+                return {
+                    "label": "错误",
+                    "confidence": 0,
+                    "probability": 0,
+                    "detail": f"预训练模型未找到: {model_path.name}",
+                }
+            model = joblib.load(model_path)
+            expected_features = getattr(model, "n_features_in_", None)
+            if expected_features is not None and expected_features != feats.shape[1]:
+                return {
+                    "label": "错误",
+                    "confidence": 0,
+                    "probability": 0,
+                    "detail": (
+                        f"当前选择生成 {feats.shape[1]} 维特征，预训练模型需要 "
+                        f"{expected_features} 维。请先在「模型评估」运行当前配置，"
+                        "再进行单图检测。"
+                    ),
+                }
+            model_source = "磁盘预训练模型"
+        y_prob = model.predict_proba(feats)[0]
+        y_pred = int(np.argmax(y_prob))
+        prob = float(y_prob[1]) if len(y_prob) > 1 else float(y_prob[0])
+        label = "✅ 有裂纹" if y_pred == 1 else "❌ 无裂纹"
+        confidence = prob if y_pred == 1 else 1.0 - prob
+        return {"label": label, "confidence": round(confidence, 4),
+                "probability": round(prob, 4),
+                "detail": f"模型: {model_key} ({model_source})"}
+
+    elif model_key == "cnn":
+        input_size = model_params.get("input_size", 128)
+        loss_fn = model_params.get("loss_fn", "cross_entropy")
+        dropout = model_params.get("dropout_rate", 0.5)
+        model = CrackCNN(dropout_rate=dropout).to(DEVICE)
+        using_session_model = _bundle_matches_config(
+            inference_bundle, model_key, config
+        )
+        if using_session_model:
+            state = inference_bundle["state_dict"]
+            model_source = "当前评估模型"
+        else:
+            cnn_path = None
+            if loss_fn == "cross_entropy":
+                cnn_path = CNN_DIR / "crackcnn_cross_entropy_best.pth"
+            elif loss_fn == "focal":
+                alpha = model_params.get("focal_alpha")
+                gamma = model_params.get("focal_gamma", 2.0)
+                if alpha is None and gamma == 2.0:
+                    cnn_path = CNN_DIR / "crackcnn_focal_gamma2_best.pth"
+                elif alpha is None and gamma == 3.0:
+                    cnn_path = CNN_DIR / "crackcnn_focal_gamma3_best.pth"
+                elif alpha == 0.5 and gamma == 2.0:
+                    cnn_path = CNN_DIR / "crackcnn_focal_balanced_best.pth"
+            elif loss_fn == "label_smoothing":
+                cnn_path = CNN_DIR / "crackcnn_label_smoothing_best.pth"
+            elif loss_fn == "dice":
+                cnn_path = CNN_DIR / "crackcnn_dice_best.pth"
+            if cnn_path is None or not cnn_path.exists():
+                return {
+                    "label": "错误",
+                    "confidence": 0,
+                    "probability": 0,
+                    "detail": f"CNN 预训练权重未找到 (loss={loss_fn})",
+                }
+            state = torch.load(cnn_path, map_location=DEVICE, weights_only=True)
+            model_source = "磁盘预训练模型"
+        _LEGACY_MAP = {"c1": "block1", "c2": "block2", "c3": "block3",
+                       "c4": "block4", "cls": "classifier"}
+        new_state = {}
+        for k, v in state.items():
+            nk = k
+            for old_p, new_p in _LEGACY_MAP.items():
+                if k.startswith(f"{old_p}."):
+                    nk = f"{new_p}.{k[len(old_p) + 1:]}"
+                    break
+            new_state[nk] = v
+        model.load_state_dict(new_state)
+        model.eval()
+
+        img_resized = cv2.resize(patch_gray, (input_size, input_size))
+        img_tensor = torch.tensor(img_resized, dtype=torch.float32).unsqueeze(0).unsqueeze(0) / 255.0
+        img_tensor = img_tensor.to(DEVICE)
+        with torch.no_grad():
+            outputs = model(img_tensor)
+            probs = torch.softmax(outputs, dim=1)[0]
+            y_pred = int(torch.argmax(probs).item())
+            prob = float(probs[1].item())
             label = "✅ 有裂纹" if y_pred == 1 else "❌ 无裂纹"
             confidence = prob if y_pred == 1 else 1.0 - prob
-            return {"label": label, "confidence": round(confidence, 4),
-                    "probability": round(prob, 4),
-                    "detail": f"模型: {model_key} ({model_source}) | 预处理: {preprocessing_list} | 特征: {feature_list}"}
+        return {"label": label, "confidence": round(confidence, 4),
+                "probability": round(prob, 4),
+                "detail": f"模型: CNN ({loss_fn}, {model_source}) | input_size={input_size}"}
 
-        elif model_key == "cnn":
-            input_size = model_params.get("input_size", 128)
-            loss_fn = model_params.get("loss_fn", "cross_entropy")
-            dropout = model_params.get("dropout_rate", 0.5)
-            model = CrackCNN(dropout_rate=dropout).to(DEVICE)
-            using_session_model = _bundle_matches_config(
-                inference_bundle, model_key, config
-            )
-            if using_session_model:
-                state = inference_bundle["state_dict"]
-                model_source = "当前评估模型"
-            else:
-                cnn_path = None
-                if loss_fn == "cross_entropy":
-                    cnn_path = CNN_DIR / "crackcnn_cross_entropy_best.pth"
-                elif loss_fn == "focal":
-                    alpha = model_params.get("focal_alpha")
-                    gamma = model_params.get("focal_gamma", 2.0)
-                    if alpha is None and gamma == 2.0:
-                        cnn_path = CNN_DIR / "crackcnn_focal_gamma2_best.pth"
-                    elif alpha is None and gamma == 3.0:
-                        cnn_path = CNN_DIR / "crackcnn_focal_gamma3_best.pth"
-                    elif alpha == 0.5 and gamma == 2.0:
-                        cnn_path = CNN_DIR / "crackcnn_focal_balanced_best.pth"
-                elif loss_fn == "label_smoothing":
-                    cnn_path = CNN_DIR / "crackcnn_label_smoothing_best.pth"
-                elif loss_fn == "dice":
-                    cnn_path = CNN_DIR / "crackcnn_dice_best.pth"
-                if cnn_path is None or not cnn_path.exists():
-                    return {
-                        "label": "错误",
-                        "confidence": 0,
-                        "probability": 0,
-                        "detail": f"CNN 预训练权重未找到 (loss={loss_fn})",
-                    }
-                state = torch.load(cnn_path, map_location=DEVICE, weights_only=True)
-                model_source = "磁盘预训练模型"
-            _LEGACY_MAP = {"c1": "block1", "c2": "block2", "c3": "block3",
-                           "c4": "block4", "cls": "classifier"}
-            new_state = {}
-            for k, v in state.items():
-                nk = k
-                for old_p, new_p in _LEGACY_MAP.items():
-                    if k.startswith(f"{old_p}."):
-                        nk = f"{new_p}.{k[len(old_p) + 1:]}"
-                        break
-                new_state[nk] = v
-            model.load_state_dict(new_state)
-            model.eval()
-
-            img_resized = cv2.resize(gray, (input_size, input_size))
-            img_tensor = torch.tensor(img_resized, dtype=torch.float32).unsqueeze(0).unsqueeze(0) / 255.0
-            img_tensor = img_tensor.to(DEVICE)
-            with torch.no_grad():
-                outputs = model(img_tensor)
-                probs = torch.softmax(outputs, dim=1)[0]
-                y_pred = int(torch.argmax(probs).item())
-                prob = float(probs[1].item())
-                label = "✅ 有裂纹" if y_pred == 1 else "❌ 无裂纹"
-                confidence = prob if y_pred == 1 else 1.0 - prob
-            return {"label": label, "confidence": round(confidence, 4),
-                    "probability": round(prob, 4),
-                    "detail": f"模型: CNN ({loss_fn}, {model_source}) | input_size={input_size}"}
-
-        elif model_key in UNSUP_MODEL_KEYS:
-            return {"label": "不支持", "confidence": 0, "probability": 0,
-                    "detail": "无监督模型不支持单张图片分类，请在「模型评估」页面进行批量评估。"}
-        else:
-            return {"label": "错误", "confidence": 0, "probability": 0,
-                    "detail": f"未知模型类型: {model_key}"}
-    except Exception as e:
+    else:
         return {"label": "错误", "confidence": 0, "probability": 0,
-                "detail": f"预测失败: {str(e)}"}
+                "detail": f"未知模型类型: {model_key}"}
+
+
+def _predict_patches(
+    gray: np.ndarray,
+    patch_size: int,
+    model_key: str,
+    config: dict,
+    inference_bundle: dict = None,
+) -> dict:
+    """滑窗切块推理：把大图切成 patch_size 块，每块独立预测后用 max-pooling 聚合。
+
+    用最高概率块决定结论（裂缝"局部存在即为有"的语义）：
+    平均会被大量背景块拉低概率，掩盖真正的裂缝块。
+    返回 detail 含切块数、正块数、最高概率块原图坐标，供文本呈现。
+    """
+    patches, boxes = _generate_patches(gray, patch_size)
+    results = [_predict_patch(p, model_key, config, inference_bundle) for p in patches]
+    # 任一块出错（如权重缺失）直接透传错误
+    for r in results:
+        if r["label"] == "错误":
+            return r
+    probs = [r["probability"] for r in results]   # 每块 P(裂缝)
+    max_prob = max(probs)
+    max_idx = int(np.argmax(probs))
+    n_positive = sum(1 for p in probs if p >= 0.5)
+
+    y_pred = 1 if max_prob >= 0.5 else 0
+    label = "✅ 有裂纹" if y_pred == 1 else "❌ 无裂纹"
+    bx, by, bw, bh = boxes[max_idx]
+    patch_detail = results[max_idx]["detail"]
+    detail = (
+        f"滑窗切块推理 | 切块数: {len(patches)} | 正块数: {n_positive} "
+        f"(P≥0.5) | 最高概率块: ({bx},{by}) {bw}×{bh} | {patch_detail}"
+    )
+    return {"label": label, "confidence": round(max_prob, 4),
+            "probability": round(max_prob, 4), "detail": detail}
 
 
 def collect_config(
