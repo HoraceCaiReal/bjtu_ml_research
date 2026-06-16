@@ -85,3 +85,6 @@ scripts/test_result.txt
 
 # PPT 演讲图表（演讲交付物，需纳入版本控制，覆盖上方 *.png 全局忽略）
 !reports/ppt图表输出/*.png
+
+# 报告生成缓存：特征矩阵体积巨大（300MB+），可由脚本重新生成，不纳入版本控制
+commit_report/figures/features_cache.npz
