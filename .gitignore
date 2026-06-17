@@ -86,5 +86,15 @@ scripts/test_result.txt
 # PPT 演讲图表（演讲交付物，需纳入版本控制，覆盖上方 *.png 全局忽略）
 !reports/ppt图表输出/*.png
 
-# 报告生成缓存：特征矩阵体积巨大（300MB+），可由脚本重新生成，不纳入版本控制
-commit_report/figures/features_cache.npz
+# 报告生成：构建脚本与实验脚本（本地工具，不纳入版本控制）
+commit_report/_build_report_notebook.py
+commit_report/_run_dt_experiment.py
+
+# 报告生成产物：图表目录与特征缓存（体积大，可重新生成）
+commit_report/figures/
+
+# IDE 工具配置（Qoder AI 助手生成的本地知识库，不纳入版本控制）
+.qoder/
+
+# 临时文件
+_tmp_cell3.txt
